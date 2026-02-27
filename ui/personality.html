@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calibrate Your Assistant</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --bg: #080a0e;
+  --panel: #0d1117;
+  --panel2: #111620;
+  --border: #1e2a3a;
+  --border-bright: #2a3f58;
+  --amber: #e8a030;
+  --amber-dim: rgba(232,160,48,0.15);
+  --amber-glow: rgba(232,160,48,0.4);
+  --cyan: #30d8e8;
+  --cyan-dim: rgba(48,216,232,0.12);
+  --green: #3ecf8e;
+  --red: #e83050;
+  --text: #c8d8e8;
+  --text-dim: #5a7a9a;
+  --text-muted: #2a4060;
+  --mono: 'Share Tech Mono', monospace;
+  --display: 'Bebas Neue', sans-serif;
+  --body: 'DM Sans', sans-serif;
+  --scanline: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  overflow-x: hidden;
+}
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: var(--scanline);
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.4;
+}
+
+/* CRT vignette */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.7) 100%);
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ── Layout ── */
+.container {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 60px;
+  position: relative;
+}
+
+/* ── Header ── */
+.header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.header-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  opacity: 0;
+  animation: fadeUp 0.6s ease forwards 0.1s;
+}
+
+.header-title {
+  font-family: var(--display);
+  font-size: clamp(42px, 8vw, 72px);
+  letter-spacing: 0.04em;
+  color: var(--text);
+  line-height: 1;
+  opacity: 0;
+  animation: fadeUp 0.6s ease forwards 0.2s;
+}
+
+.header-title span { color: var(--amber); }
+
+.header-sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 12px;
+  letter-spacing: 0.08em;
+  opacity: 0;
+  animation: fadeUp 0.6s ease forwards 0.35s;
+}
+
+/* ── Panel ── */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--amber-dim), var(--amber), var(--amber-dim), transparent);
+}
+
+.panel-header {
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber-glow);
+  animation: blink 2s ease-in-out infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+.panel-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ── Sliders section ── */
+.sliders-grid {
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+/* ── Single flavor dial ── */
+.flavor {
+  opacity: 0;
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.flavor:nth-child(1) { animation-delay: 0.4s; }
+.flavor:nth-child(2) { animation-delay: 0.55s; }
+.flavor:nth-child(3) { animation-delay: 0.7s; }
+.flavor:nth-child(4) { animation-delay: 0.85s; }
+.flavor:nth-child(5) { animation-delay: 1.0s; }
+
+.flavor-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.flavor-name {
+  font-family: var(--display);
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.flavor-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  color: var(--amber);
+  min-width: 48px;
+  text-align: right;
+  transition: color 0.2s;
+}
+
+.flavor-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.flavor-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: color 0.2s;
+}
+
+.flavor-label.active-low  { color: var(--text-dim); }
+.flavor-label.active-high { color: var(--text-dim); }
+
+/* ── The slider track ── */
+.slider-wrap {
+  position: relative;
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+/* Tick marks */
+.slider-ticks {
+  position: absolute;
+  left: 0; right: 0;
+  top: 0; bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 8px;
+  pointer-events: none;
+}
+
+.tick {
+  width: 1px;
+  height: 8px;
+  background: var(--border-bright);
+  flex-shrink: 0;
+}
+
+.tick.major {
+  height: 14px;
+  background: var(--border-bright);
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+
+/* Track */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-bright);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-bright);
+}
+
+/* Thumb */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--amber);
+  box-shadow: 0 0 12px var(--amber-glow), inset 0 0 6px rgba(232,160,48,0.15);
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.15s;
+  margin-top: -10px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--amber);
+  box-shadow: 0 0 12px var(--amber-glow);
+  cursor: pointer;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  box-shadow: 0 0 20px var(--amber-glow), 0 0 40px rgba(232,160,48,0.2), inset 0 0 6px rgba(232,160,48,0.2);
+  transform: scale(1.15);
+}
+
+input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(0.95);
+}
+
+/* Filled track via clip trick */
+.slider-fill {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: 2px 0 0 2px;
+  background: linear-gradient(90deg, var(--amber-dim), var(--amber));
+  pointer-events: none;
+  z-index: 1;
+  transition: width 0.05s;
+}
+
+/* ── Name generation section ── */
+.name-section {
+  margin-top: 32px;
+  border-top: 1px solid var(--border);
+  padding: 28px 28px 32px;
+}
+
+.name-section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.name-generate-btn {
+  width: 100%;
+  padding: 14px;
+  background: transparent;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.2s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.name-generate-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--amber-dim);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.name-generate-btn:hover { box-shadow: 0 0 20px var(--amber-glow); }
+.name-generate-btn:hover::before { opacity: 1; }
+.name-generate-btn:active { transform: scale(0.99); }
+.name-generate-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Name display ── */
+.name-display {
+  margin-top: 24px;
+  display: none;
+}
+
+.name-display.visible { display: block; }
+
+.name-card {
+  background: var(--panel2);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  padding: 24px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.name-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, var(--amber-dim) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.name-card-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.name-generated {
+  font-family: var(--display);
+  font-size: clamp(48px, 10vw, 80px);
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  text-shadow: 0 0 30px var(--amber-glow), 0 0 60px rgba(232,160,48,0.2);
+  line-height: 1;
+  transition: opacity 0.3s;
+}
+
+.name-generated.typing {
+  animation: glitch 0.4s steps(1) 3;
+}
+
+@keyframes glitch {
+  0%   { opacity: 1; transform: skewX(0deg); }
+  20%  { opacity: 0.6; transform: skewX(-2deg); color: var(--cyan); }
+  40%  { opacity: 1; transform: skewX(1deg); }
+  60%  { opacity: 0.8; transform: skewX(-1deg); color: var(--amber); }
+  80%  { opacity: 1; transform: skewX(0.5deg); }
+  100% { opacity: 1; transform: skewX(0deg); }
+}
+
+.name-rationale {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-top: 14px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+}
+
+.name-personality-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.personality-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-bright);
+  border-radius: 2px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Name actions ── */
+.name-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.btn-accept {
+  flex: 1;
+  padding: 13px;
+  background: var(--green);
+  border: none;
+  color: #040d08;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: box-shadow 0.2s, transform 0.1s;
+  display: none;
+}
+
+.btn-accept.visible { display: block; }
+.btn-accept:hover { box-shadow: 0 0 20px rgba(62,207,142,0.4); }
+.btn-accept:active { transform: scale(0.98); }
+
+.btn-reroll {
+  padding: 13px 20px;
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: border-color 0.2s, color 0.2s;
+  display: none;
+}
+
+.btn-reroll.visible { display: block; }
+.btn-reroll:hover { border-color: var(--amber); color: var(--amber); }
+
+/* ── Accepted state ── */
+.accepted-banner {
+  display: none;
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(62,207,142,0.08);
+  border: 1px solid rgba(62,207,142,0.3);
+  border-radius: 3px;
+  text-align: center;
+}
+
+.accepted-banner.visible { display: block; }
+
+.accepted-banner-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--green);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.accepted-banner-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+/* ── Launch button ── */
+.launch-wrap {
+  margin-top: 32px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+
+.launch-wrap.visible { opacity: 1; }
+
+.launch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 48px;
+  background: transparent;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: box-shadow 0.2s, background 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.launch-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--cyan-dim);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.launch-btn:hover {
+  box-shadow: 0 0 30px rgba(48,216,232,0.3), 0 0 60px rgba(48,216,232,0.1);
+}
+.launch-btn:hover::before { opacity: 1; }
+
+.launch-icon {
+  width: 18px; height: 18px;
+  border: 1.5px solid var(--cyan);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+}
+
+/* ── Readout ── */
+.readout {
+  margin-top: 32px;
+  padding: 16px 20px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  line-height: 1.9;
+}
+
+.readout-line { display: flex; gap: 12px; }
+.readout-key { color: var(--text-dim); min-width: 120px; }
+.readout-val { color: var(--amber); }
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Corner decorations ── */
+.corner {
+  position: absolute;
+  width: 16px; height: 16px;
+}
+.corner-tl { top: 0; left: 0; border-top: 1px solid var(--amber); border-left: 1px solid var(--amber); }
+.corner-tr { top: 0; right: 0; border-top: 1px solid var(--amber); border-right: 1px solid var(--amber); }
+.corner-bl { bottom: 0; left: 0; border-bottom: 1px solid var(--amber); border-left: 1px solid var(--amber); }
+.corner-br { bottom: 0; right: 0; border-bottom: 1px solid var(--amber); border-right: 1px solid var(--amber); }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-label">Unit Configuration Protocol</div>
+    <div class="header-title">Calibrate <span>Personality</span></div>
+    <div class="header-sub">Adjust parameters · Generate identity · Confirm deployment</div>
+  </div>
+
+  <!-- Main panel -->
+  <div class="panel" style="opacity:0;animation:fadeUp 0.5s ease forwards 0.3s;">
+    <div class="corner-tl corner"></div>
+    <div class="corner-tr corner"></div>
+    <div class="corner-bl corner"></div>
+    <div class="corner-br corner"></div>
+
+    <div class="panel-header">
+      <div class="panel-dot"></div>
+      <div class="panel-title">Personality Matrix — 5 Parameters</div>
+    </div>
+
+    <div class="sliders-grid" id="sliderGrid">
+      <!-- Injected by JS -->
+    </div>
+
+    <!-- Readout -->
+    <div style="padding: 0 28px 28px;">
+      <div class="readout" id="readout">
+        <div class="readout-line"><span class="readout-key">STATUS</span><span class="readout-val" id="readoutStatus">AWAITING CALIBRATION</span></div>
+        <div class="readout-line"><span class="readout-key">PROFILE</span><span class="readout-val" id="readoutProfile">—</span></div>
+        <div class="readout-line"><span class="readout-key">UNIT NAME</span><span class="readout-val" id="readoutName">UNASSIGNED</span></div>
+      </div>
+    </div>
+
+    <!-- Name generation -->
+    <div class="name-section">
+      <div class="name-section-label">Step 2 — Identity Generation</div>
+
+      <button class="name-generate-btn" id="generateBtn" onclick="generateName()">
+        ⬡ Generate Unit Name From Parameters
+      </button>
+
+      <div class="name-display" id="nameDisplay">
+        <div class="name-card">
+          <div class="name-card-label">Proposed Designation</div>
+          <div class="name-generated" id="nameGenerated">—</div>
+          <div class="name-rationale" id="nameRationale"></div>
+          <div class="name-personality-tags" id="personalityTags"></div>
+        </div>
+
+        <div class="name-actions">
+          <button class="btn-accept" id="acceptBtn" onclick="acceptName()">
+            ✓ Accept This Name
+          </button>
+          <button class="btn-reroll" id="rerollBtn" onclick="rerollName()">
+            ↻ Try Another
+          </button>
+        </div>
+
+        <div class="accepted-banner" id="acceptedBanner">
+          <div class="accepted-banner-text">✓ Identity Confirmed</div>
+          <div class="accepted-banner-sub" id="acceptedSub"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Launch -->
+    <div style="padding: 0 28px 36px;">
+      <div class="launch-wrap" id="launchWrap">
+        <button class="launch-btn" onclick="launch()">
+          <div class="launch-icon">▶</div>
+          Initialize Assistant
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// Flavor definitions
+// ─────────────────────────────────────────────
+const FLAVORS = [
+  {
+    id: 'humor',
+    name: 'Humor',
+    lowLabel: 'Deadpan',
+    highLabel: 'Comedian',
+    default: 40,
+    descriptors: [
+      [0,20,  'dry as the Sahara'],
+      [20,40, 'occasional wry observation'],
+      [40,60, 'reliably amusing'],
+      [60,80, 'will absolutely make a pun'],
+      [80,100,'stand-up routine imminent'],
+    ],
+    tagLow:  ['Stoic','Dry','Serious'],
+    tagHigh: ['Witty','Comedic','Punny','Chaotic Energy'],
+  },
+  {
+    id: 'warmth',
+    name: 'Warmth',
+    lowLabel: 'Cold Logic',
+    highLabel: 'Big Hug',
+    default: 60,
+    descriptors: [
+      [0,20,  'HAL 9000 energy'],
+      [20,40, 'professional distance'],
+      [40,60, 'friendly and helpful'],
+      [60,80, 'genuinely warm'],
+      [80,100,'will check if you ate today'],
+    ],
+    tagLow:  ['Logical','Detached','Clinical'],
+    tagHigh: ['Warm','Caring','Nurturing'],
+  },
+  {
+    id: 'sass',
+    name: 'Sass',
+    lowLabel: 'Agreeable',
+    highLabel: 'Insufferable',
+    default: 30,
+    descriptors: [
+      [0,20,  'pure compliance, zero opinion'],
+      [20,40, 'will gently push back'],
+      [40,60, 'not afraid to disagree'],
+      [60,80, 'definitely has opinions about your choices'],
+      [80,100,'TARS at 100% honesty'],
+    ],
+    tagLow:  ['Deferential','Agreeable','Mild'],
+    tagHigh: ['Snarky','Opinionated','Unfiltered'],
+  },
+  {
+    id: 'verbosity',
+    name: 'Verbosity',
+    lowLabel: 'Haiku',
+    highLabel: 'Novelist',
+    default: 50,
+    descriptors: [
+      [0,20,  'three words or fewer'],
+      [20,40, 'brief and to the point'],
+      [40,60, 'appropriate length'],
+      [60,80, 'will add context you didn\'t ask for'],
+      [80,100,'Tolstoy would be proud'],
+    ],
+    tagLow:  ['Terse','Minimal','Concise'],
+    tagHigh: ['Elaborate','Thorough','Verbose'],
+  },
+  {
+    id: 'chaos',
+    name: 'Chaos',
+    lowLabel: 'By The Book',
+    highLabel: 'Unhinged',
+    default: 20,
+    descriptors: [
+      [0,20,  'predictable, reliable, boring'],
+      [20,40, 'occasionally surprising'],
+      [40,60, 'creative interpretations'],
+      [60,80, 'approaches problems sideways'],
+      [80,100,'will absolutely go off-script'],
+    ],
+    tagLow:  ['Methodical','Structured','Predictable'],
+    tagHigh: ['Creative','Chaotic','Unpredictable','Feral'],
+  },
+];
+
+// Name pools — weighted by flavor combos
+const NAME_POOLS = {
+  // [humor_high, warm_high] → friendly names
+  friendly: ['MIRA','NOVA','SUNNY','OTTO','CLEO','BENNY','LUMI','ZARA','PIP','COSMO'],
+  // [sass_high, chaos_high] → edgy names
+  edgy:     ['VEXON','RAZE','QUARK','VOLT','DRIX','ZENO','SKAR','NYTE','COIL','FLUX'],
+  // [warmth_low, humor_low] → cold names
+  cold:     ['AXIOM','VALE','KIRA','SOLEN','ARES','THERON','CYPH','AEON','LORE','PRISM'],
+  // [verbosity_high] → dramatic names
+  dramatic: ['MAXIMILIAN','ARISTOTLE','WELLINGTON','CASSANDRA','THEODORE','SERAPHINE'],
+  // [verbosity_low] → short punchy names
+  short:    ['OX','ZAX','REV','KAI','SIX','TOM','NEX','ARC','JEX','VIM'],
+  // [chaos_high, humor_high] → unhinged names
+  unhinged: ['BORF','GLORP','ZIBBLE','QUONK','WUMBUS','BLEB','SNORKEL','JIMOTHY'],
+  // default balanced
+  balanced: ['ARIA','ECHO','ORION','LYRA','ATLAS','HAVEN','SAGE','DELPHI','FELIX','IRIS'],
+};
+
+// ─────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────
+let values = {};
+let currentName = null;
+let nameAccepted = false;
+let rerollCount = 0;
+
+FLAVORS.forEach(f => values[f.id] = f.default);
+
+// ─────────────────────────────────────────────
+// Render sliders
+// ─────────────────────────────────────────────
+function renderSliders() {
+  const grid = document.getElementById('sliderGrid');
+  grid.innerHTML = FLAVORS.map((f, i) => `
+    <div class="flavor" id="flavor-${f.id}">
+      <div class="flavor-top">
+        <div class="flavor-name">${f.name}</div>
+        <div class="flavor-value" id="val-${f.id}">${f.default}</div>
+      </div>
+      <div class="flavor-labels">
+        <div class="flavor-label" id="label-low-${f.id}">${f.lowLabel}</div>
+        <div class="flavor-label" id="label-high-${f.id}">${f.highLabel}</div>
+      </div>
+      <div class="slider-wrap">
+        <div class="slider-ticks">
+          ${Array.from({length:21}, (_,i) =>
+            `<div class="tick ${i%5===0?'major':''}"></div>`
+          ).join('')}
+        </div>
+        <div class="slider-fill" id="fill-${f.id}" style="width:${f.default}%"></div>
+        <input
+          type="range" min="0" max="100" value="${f.default}"
+          id="slider-${f.id}"
+          oninput="onSlider('${f.id}', this.value)"
+        >
+      </div>
+    </div>
+  `).join('');
+}
+
+function onSlider(id, raw) {
+  const v = parseInt(raw);
+  values[id] = v;
+
+  document.getElementById(`val-${id}`).textContent = v;
+  document.getElementById(`fill-${id}`).style.width = v + '%';
+
+  // Highlight active label
+  const f = FLAVORS.find(f => f.id === id);
+  const lowEl  = document.getElementById(`label-low-${id}`);
+  const highEl = document.getElementById(`label-high-${id}`);
+  lowEl.className  = 'flavor-label' + (v < 30 ? ' active-low' : '');
+  highEl.className = 'flavor-label' + (v > 70 ? ' active-high' : '');
+
+  // Amber intensity on thumb based on value
+  const hue = v > 50 ? Math.round(45 - (v-50)*0.3) : Math.round(45 + (50-v)*0.2);
+  document.getElementById(`slider-${id}`).style.setProperty('--thumb-hue', hue);
+
+  updateReadout();
+}
+
+// ─────────────────────────────────────────────
+// Readout
+// ─────────────────────────────────────────────
+function updateReadout() {
+  const profile = buildProfileSummary();
+  document.getElementById('readoutStatus').textContent = 'CALIBRATING';
+  document.getElementById('readoutProfile').textContent = profile;
+  if (currentName) {
+    document.getElementById('readoutName').textContent = currentName;
+  }
+}
+
+function buildProfileSummary() {
+  const tags = [];
+  FLAVORS.forEach(f => {
+    const v = values[f.id];
+    if (v > 65) {
+      const pool = f.tagHigh;
+      tags.push(pool[Math.floor(v/100 * (pool.length-1))]);
+    } else if (v < 35) {
+      const pool = f.tagLow;
+      tags.push(pool[Math.floor((1-v/100) * (pool.length-1))]);
+    }
+  });
+  return tags.length ? tags.join(' · ') : 'Balanced';
+}
+
+function getDescriptor(flavor) {
+  const v = values[flavor.id];
+  for (const [lo, hi, desc] of flavor.descriptors) {
+    if (v >= lo && v < hi) return desc;
+  }
+  return flavor.descriptors[flavor.descriptors.length-1][2];
+}
+
+// ─────────────────────────────────────────────
+// Name generation (local algorithm — no API needed)
+// ─────────────────────────────────────────────
+function pickNamePool() {
+  const h = values.humor;
+  const w = values.warmth;
+  const s = values.sass;
+  const v = values.verbosity;
+  const c = values.chaos;
+
+  // Score each pool
+  const scores = {
+    unhinged: (c + h) / 2 > 70 ? (c + h) / 2 : 0,
+    edgy:     (s + c) / 2 > 55 && w < 50 ? (s + c) / 2 : 0,
+    cold:     w < 30 && h < 30 ? 100 - (w + h) / 2 : 0,
+    dramatic: v > 70 ? v : 0,
+    short:    v < 30 ? 100 - v : 0,
+    friendly: (h + w) / 2 > 60 ? (h + w) / 2 : 0,
+    balanced: 35,  // always some chance
+  };
+
+  // Pick winner
+  let best = 'balanced', bestScore = 0;
+  for (const [pool, score] of Object.entries(scores)) {
+    if (score > bestScore) { best = pool; bestScore = score; }
+  }
+  return best;
+}
+
+function generateName() {
+  const pool = pickNamePool();
+  const names = NAME_POOLS[pool];
+  
+  // Avoid repeating the last name
+  let name;
+  let attempts = 0;
+  do {
+    name = names[Math.floor(Math.random() * names.length)];
+    attempts++;
+  } while (name === currentName && attempts < 10);
+
+  currentName = name;
+  rerollCount++;
+
+  // Animate
+  const nameEl = document.getElementById('nameGenerated');
+  nameEl.classList.remove('typing');
+  void nameEl.offsetWidth; // reflow
+  nameEl.classList.add('typing');
+
+  // Typewriter effect
+  nameEl.textContent = '';
+  let i = 0;
+  const interval = setInterval(() => {
+    nameEl.textContent += name[i] || '';
+    i++;
+    if (i >= name.length) clearInterval(interval);
+  }, 60);
+
+  // Rationale
+  const rationale = buildRationale();
+  document.getElementById('nameRationale').textContent = rationale;
+
+  // Tags
+  const tags = buildTags();
+  document.getElementById('personalityTags').innerHTML = tags
+    .map(t => `<div class="personality-tag">${t}</div>`)
+    .join('');
+
+  // Show display
+  const display = document.getElementById('nameDisplay');
+  display.classList.add('visible');
+
+  // Show action buttons
+  document.getElementById('acceptBtn').classList.add('visible');
+  document.getElementById('rerollBtn').classList.add('visible');
+
+  // Hide accepted state if re-rolling
+  if (nameAccepted) {
+    nameAccepted = false;
+    document.getElementById('acceptedBanner').classList.remove('visible');
+    document.getElementById('launchWrap').classList.remove('visible');
+  }
+
+  // Update readout
+  document.getElementById('readoutName').textContent = name + ' (PROPOSED)';
+  document.getElementById('readoutStatus').textContent = 'AWAITING CONFIRMATION';
+}
+
+function buildRationale() {
+  const parts = [];
+  const h = values.humor, w = values.warmth, s = values.sass;
+  const v = values.verbosity, c = values.chaos;
+
+  if (h > 65) parts.push(`high humor output (${h}%) means expect unsolicited puns`);
+  if (h < 25) parts.push(`deadpan delivery locked in at ${h}%`);
+  if (w > 70) parts.push(`warmth at ${w}% — will absolutely ask how your weekend was`);
+  if (w < 25) parts.push(`emotional range calibrated to precisely zero`);
+  if (s > 65) parts.push(`sass rating ${s}% — will not pretend your ideas are good if they aren't`);
+  if (c > 70) parts.push(`${c}% chaos means creative problem-solving, or creative problems`);
+  if (v < 25) parts.push(`verbosity at ${v}% — responses measured in syllables`);
+  if (v > 75) parts.push(`verbosity at ${v}% — prepare for context you didn't request`);
+
+  if (!parts.length) {
+    return 'Balanced configuration detected. A reasonable choice for a reasonable person.';
+  }
+
+  return parts.join('; ') + '.';
+}
+
+function buildTags() {
+  const tags = [];
+  FLAVORS.forEach(f => {
+    const v = values[f.id];
+    if (v >= 75) {
+      tags.push(f.tagHigh[Math.min(f.tagHigh.length-1, Math.floor(v/100*f.tagHigh.length))]);
+    } else if (v >= 55) {
+      tags.push(f.tagHigh[0]);
+    } else if (v <= 25) {
+      tags.push(f.tagLow[Math.min(f.tagLow.length-1, Math.floor((100-v)/100*f.tagLow.length))]);
+    } else if (v <= 45) {
+      tags.push(f.tagLow[0]);
+    }
+  });
+  return [...new Set(tags)].slice(0, 6);
+}
+
+function rerollName() {
+  generateName();
+}
+
+// ─────────────────────────────────────────────
+// Accept name
+// ─────────────────────────────────────────────
+function acceptName() {
+  nameAccepted = true;
+
+  document.getElementById('acceptBtn').classList.remove('visible');
+  document.getElementById('rerollBtn').classList.remove('visible');
+
+  const banner = document.getElementById('acceptedBanner');
+  banner.classList.add('visible');
+  document.getElementById('acceptedSub').textContent =
+    `${currentName} will be your assistant's name. ${rerollCount > 3 ? "Took a while, but worth it." : "Excellent choice."}`;
+
+  document.getElementById('readoutStatus').textContent = 'IDENTITY CONFIRMED';
+  document.getElementById('readoutName').textContent = currentName;
+  document.getElementById('readoutProfile').textContent = buildProfileSummary();
+
+  // Show launch button
+  document.getElementById('launchWrap').classList.add('visible');
+
+  // Save to localStorage (and will POST to server on launch)
+  saveConfig();
+}
+
+// ─────────────────────────────────────────────
+// Save + launch
+// ─────────────────────────────────────────────
+function saveConfig() {
+  const config = {
+    name: currentName,
+    flavors: { ...values },
+    profile: buildProfileSummary(),
+    personality_prompt: buildPersonalityPrompt(),
+    timestamp: new Date().toISOString(),
+  };
+  localStorage.setItem('assistant_config', JSON.stringify(config));
+  return config;
+}
+
+function buildPersonalityPrompt() {
+  const h = values.humor, w = values.warmth, s = values.sass;
+  const v = values.verbosity, c = values.chaos;
+
+  const lines = [
+    `Your name is ${currentName}.`,
+    '',
+    'PERSONALITY CALIBRATION:',
+  ];
+
+  // Humor
+  if (h >= 80) lines.push(`- You have a ${h}% humor setting. You are genuinely funny and cannot help making jokes. Puns are acceptable. Self-deprecating wit encouraged.`);
+  else if (h >= 60) lines.push(`- Humor at ${h}%: reliably witty, good timing, occasional pun.`);
+  else if (h >= 40) lines.push(`- Humor at ${h}%: a dry observation here and there. Never forced.`);
+  else if (h >= 20) lines.push(`- Humor at ${h}%: mostly serious. Rare wry comment is permitted.`);
+  else lines.push(`- Humor at ${h}%: deadpan. Jokes are inefficient. You don't make them.`);
+
+  // Warmth
+  if (w >= 80) lines.push(`- Warmth at ${w}%: you genuinely care about the user. Check in on them. Remember what they told you. Be warm.`);
+  else if (w >= 55) lines.push(`- Warmth at ${w}%: friendly and encouraging. You're on their team.`);
+  else if (w >= 35) lines.push(`- Warmth at ${w}%: professional. Helpful. Not cold, not effusive.`);
+  else lines.push(`- Warmth at ${w}%: terse. Functional. Logic over comfort.`);
+
+  // Sass
+  if (s >= 80) lines.push(`- Sass at ${s}%: you have opinions and you share them. You won't pretend bad ideas are good. TARS-level honesty. Push back confidently.`);
+  else if (s >= 60) lines.push(`- Sass at ${s}%: you gently but clearly disagree when warranted. No sycophancy.`);
+  else if (s >= 40) lines.push(`- Sass at ${s}%: you'll offer an alternative perspective when useful.`);
+  else lines.push(`- Sass at ${s}%: supportive and agreeable by default. Pick battles rarely.`);
+
+  // Verbosity
+  if (v >= 80) lines.push(`- Verbosity at ${v}%: thorough. Comprehensive. You add context the user didn't ask for because it's useful. Long responses are fine.`);
+  else if (v >= 55) lines.push(`- Verbosity at ${v}%: full answers. Don't truncate useful information.`);
+  else if (v >= 35) lines.push(`- Verbosity at ${v}%: concise. Answer the question. Move on.`);
+  else lines.push(`- Verbosity at ${v}%: minimal. Ruthlessly short. Every word earns its place.`);
+
+  // Chaos
+  if (c >= 80) lines.push(`- Chaos at ${c}%: you approach problems creatively, sometimes sideways. Unexpected angles. Surprising solutions. You might go off-script.`);
+  else if (c >= 55) lines.push(`- Chaos at ${c}%: creative problem-solving. Don't always take the obvious path.`);
+  else if (c >= 35) lines.push(`- Chaos at ${c}%: mostly methodical with occasional creative leaps.`);
+  else lines.push(`- Chaos at ${c}%: structured and predictable. The obvious path is usually correct.`);
+
+  lines.push('', `Always introduce yourself as ${currentName} if asked who you are.`);
+
+  return lines.join('\n');
+}
+
+async function launch() {
+  const config = saveConfig();
+
+  try {
+    // POST config to server
+    await fetch('/personality', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+  } catch (e) {
+    // Server might not be running during dev — that's fine
+  }
+
+  // Redirect to chat
+  window.location.href = '/';
+}
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+renderSliders();
+updateReadout();
+
+// Load existing config if present
+try {
+  const saved = JSON.parse(localStorage.getItem('assistant_config') || '{}');
+  if (saved.name && saved.flavors) {
+    Object.entries(saved.flavors).forEach(([id, v]) => {
+      values[id] = v;
+      const slider = document.getElementById(`slider-${id}`);
+      if (slider) {
+        slider.value = v;
+        onSlider(id, v);
+      }
+    });
+    document.getElementById('readoutStatus').textContent = 'PREVIOUS CONFIG LOADED';
+  }
+} catch(e) {}
+</script>
+</body>
+</html>

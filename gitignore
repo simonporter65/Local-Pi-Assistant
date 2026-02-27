@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.env/
+.venv/
+
+# Runtime data (never commit these)
+memory/agent.db
+memory/personality.json
+memory/*.db-wal
+memory/*.db-shm
+logs/
+workspace/
+screenshots/
+
+# Environment / secrets
+.env
+*.env
+agent-env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Playwright
+playwright/.local-chromium/
