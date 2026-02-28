@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Optional, Set
 
 from autonomous.task_queue import TaskQueue, _in_hours, _in_minutes
+from autonomous.curiosity import get_curiosity_question
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ HEARTBEAT_INTERVAL   = 5 * 60   # Check queue every 5 minutes
 USER_PAUSE_COOLDOWN  = 30       # Wait 30s after user interaction before resuming
 MAX_TASK_DURATION    = 10 * 60  # Kill a task after 10 minutes
 BACKGROUND_MODEL     = "llama3.2:3b"  # Lighter model for background, save RAM for user
+CURIOSITY_INTERVAL   = 10  # Ask a curiosity question every N heartbeat cycles
 BACKGROUND_MODEL_FALLBACK = "llama3.1:8b"
 
 # Token budget for background tasks — don't be greedy
@@ -87,6 +89,7 @@ self-improvement opportunities, and maintenance tasks.
 Return JSON array:
 [{{"title": "...", "description": "...", "task_type": "research|self_improve|prepare|reflect|maintain|custom", "priority_name": "normal|low|idle"}}]
 Return ONLY valid JSON."""
+
 
 
 class HeartbeatLoop:
@@ -167,6 +170,30 @@ class HeartbeatLoop:
             # Nothing to do — trigger a reflection to generate new tasks
             pending = await asyncio.to_thread(self.queue.pending_count)
             if pending == 0:
+                # Every N cycles, ask a curiosity question instead of reflecting
+                self._curiosity_counter = getattr(self, '_curiosity_counter', 0) + 1
+                if self._curiosity_counter >= CURIOSITY_INTERVAL:
+                    self._curiosity_counter = 0
+                    try:
+                        question = await asyncio.to_thread(
+                            get_curiosity_question,
+                            self.personality.name or "Assistant",
+                            self.user_model,
+                            BACKGROUND_MODEL,
+                        )
+                        if question:
+                            await self._notify("curiosity", f"💬 {question}")
+                            # Queue it as a proactive suggestion
+                            await asyncio.to_thread(
+                                self.queue.add,
+                                title=f"Ask user: {question[:50]}",
+                                description=question,
+                                task_type="curiosity",
+                                priority_name="idle",
+                            )
+                            return
+                    except Exception as e:
+                        pass
                 await self._notify("reflecting", "Queue empty — reflecting on what to do next...")
                 await self._run_reflection()
             else:

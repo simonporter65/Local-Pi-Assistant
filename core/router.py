@@ -16,12 +16,12 @@ def get_installed_models() -> list:
 TIER_PREFERENCES = {
     "fast":   ["llama3.2:3b", "llama3.2:1b", "qwen2.5:3b", "qwen2.5:0.5b"],
     "normal": ["llama3.1:8b", "mistral:7b", "qwen2.5:7b", "llama3.2:3b"],
-    "coding": ["qwen2.5-coder:7b", "qwen2.5-coder:14b", "llama3.1:8b", "llama3.2:3b"],
+    "coding": ["qwen2.5-coder:7b", "llama3.1:8b", "mistral:7b", "llama3.2:3b"],
     "slow":   ["qwen2.5:14b", "phi4:14b", "deepseek-r1:14b", "llama3.1:8b", "llama3.2:3b"],
 }
 
 CATEGORY_TIER = {
-    "general_chat":       "fast",
+    "general_chat":       "normal",
     "summarization":      "fast",
     "translation":        "fast",
     "sentiment_analysis": "fast",

@@ -26,6 +26,8 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.classifier import classify_intent
+from core.pipeline_pre import run_pre_pipeline
+from core.fast_classifier import fast_classify
 from core.rewriter import rewrite_prompt
 from core.router import route_to_model, get_fallback
 from core.token_budget import get_token_budget
@@ -85,7 +87,7 @@ async def lifespan(app: FastAPI):
         user_model=user_model,
         broadcast_fn=broadcast,
     )
-    # asyncio.create_task(heartbeat.run(), name="heartbeat")  # disabled for testing
+    asyncio.create_task(heartbeat.run(), name="heartbeat")
 
     name = personality.name or "Assistant"
     print(f"[SERVER] Ready → http://localhost:8765")
@@ -177,6 +179,15 @@ async def event_stream(request: Request):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ── Conversation history (last 6 exchanges) ─────────────────────────────────
+_conversation_history: list = []
+MAX_HISTORY = 6
+
+def _add_to_history(role: str, content: str):
+    _conversation_history.append({"role": role, "content": content})
+    if len(_conversation_history) > MAX_HISTORY * 2:
+        del _conversation_history[:-MAX_HISTORY * 2]
+
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 @app.post("/chat")
@@ -202,9 +213,14 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
 
     yield sse("stage", message="Reading your message...")
     await asyncio.sleep(0)
-    # Hardcoded routing — bypass 0.5b classifier until more models loaded
-    intent   = {"category": "general_chat", "confidence": 1.0, "latency": "fast"}
-    category = "general_chat"
+    # Track conversation
+    _add_to_history("user", user_message)
+
+    # Fast heuristic first — only call 0.5b if ambiguous
+    intent = fast_classify(user_message)
+    if intent is None:
+        intent = await asyncio.to_thread(run_pre_pipeline, user_message)
+    category = intent.get("category", "general_chat")
 
     yield sse("stage", message="Remembering what I know about you...")
     await asyncio.sleep(0)
@@ -212,50 +228,66 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
     user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
     await asyncio.to_thread(user_model.extract_from_message, user_message)
 
-    model   = "llama3.2:3b"
-    latency = "fast"
-    budget  = 512
+    route   = route_to_model(intent)
+    model   = route["model"]
+    latency = route.get("latency", "fast")
+    budget  = get_token_budget(latency, category)
+
+    # Fire quick ack in background while we prep
+    ack_task = asyncio.create_task(_quick_ack(user_message, name))
+
+    rewritten = user_message
+    # Only search memory if message references past context
+    memory_triggers = {"remember", "earlier", "last time", "you said", "we discussed",
+                       "before", "previously", "again", "still", "anymore"}
+    msg_words = set(user_message.lower().split())
+    if msg_words & memory_triggers:
+        past = await asyncio.to_thread(memory.semantic_search, user_message, 3)
+        past_ctx = "\n".join([
+            f"- '{p['input'][:50]}' → '{p['output'][:80]}'"
+            for p in past
+        ]) or "None yet."
+    else:
+        past_ctx = "None yet." 
+
+    system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx)
+
+    # Send quick ack once ready
+    ack = await ack_task
+    if ack:
+        yield sse("quick_ack", message=ack)
 
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
 
-    rewritten = user_message  # skip rewrite to avoid 0.5b call
-    past = await asyncio.to_thread(memory.semantic_search, user_message, 3)
-    past_ctx = "\n".join([
-        f"- '{p['input'][:50]}' → '{p['output'][:80]}'"
-        for p in past
-    ]) or "None yet."
-
-    system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx)
-
+    final = "Something went wrong — please try again."
     result = None
-    models_to_try = [model] + get_fallback(model)
 
-    for attempt in range(6):
-        current = models_to_try[min(attempt, len(models_to_try) - 1)]
-        if attempt > 0:
-            yield sse("stage", message=f"Trying a different approach...")
-
-        try:
-            result, skill_events, think_events = await _run_model(
-                rewritten, current, system, budget
-            )
-            for ev in think_events:
-                yield sse("thinking", text=ev)
-            for ev in skill_events:
-                yield sse("skill_call", skill=ev.get("name", "?"), args=ev.get("args", {}))
-            if result.get("success"):
+    try:
+        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _conversation_history):
+            if event_type == "token":
+                yield sse("token", text=data)
+            elif event_type == "think":
+                yield sse("thinking", text=data)
+            elif event_type == "skill":
+                yield sse("skill_call", skill=data.get("name", "?"), args=data.get("args", {}))
+            elif event_type == "done":
+                result = data
+                final = data.get("output", final)
                 break
-        except Exception as e:
-            print(f"[CHAT ERROR] attempt {attempt}: {type(e).__name__}: {e}", flush=True)
-            rewritten = f"Error: {e}\nOriginal: {user_message}\nTry differently."
+    except Exception as e:
+        print(f"[CHAT ERROR] {type(e).__name__}: {e}", flush=True)
+        try:
+            result, skill_events, think_events = await _run_model(rewritten, model, system, budget)
+            final = result.get("output", final)
+        except Exception as e2:
+            print(f"[CHAT ERROR fallback] {e2}", flush=True)
 
-    print(f"[DEBUG] result={result}", flush=True)
+    # Track assistant response in history
+    if final and final != "Something went wrong — please try again.":
+        _add_to_history("assistant", final)
+
     yield sse("stage_done", message="Done")
-
-    final = (result or {}).get("output", "Something went wrong — please try again.")
-    final = final  # skip personalise_response (uses 0.5b, causes hang)
-
     yield sse("final", message=final)
 
     # Log
@@ -289,6 +321,125 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
 
     heartbeat.resume_after_user()
 
+
+
+async def _quick_ack(user_message: str, name: str) -> str:
+    """Generate a fast 1-2 sentence acknowledgement using 0.5b model."""
+    import ollama
+    try:
+        resp = await asyncio.to_thread(
+            ollama.generate,
+            model="qwen2.5:0.5b",
+            prompt=(
+                f"You are {name}, a helpful assistant. "
+                f"The user said: \"{user_message[:150]}\"\n"
+                f"Write ONE short sentence (max 15 words) acknowledging you heard them "
+                f"and are working on it. Be natural. No FINAL: prefix."
+            ),
+            options={"temperature": 0.7, "num_predict": 30, "num_ctx": 512}
+        )
+        ack = resp["response"].strip()
+        if len(ack) > 120 or len(ack) < 5:
+            return ""
+        return ack
+    except Exception:
+        return ""
+
+
+async def _iter_stream(stream):
+    """Wrap synchronous ollama stream iterator for async use."""
+    import concurrent.futures
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        it = iter(stream)
+        while True:
+            try:
+                chunk = await loop.run_in_executor(pool, next, it)
+                yield chunk
+            except StopIteration:
+                break
+
+
+async def _run_model_streaming(prompt, model, system, budget, history=None):
+    """Streams tokens. Yields: ("token", text) | ("skill", ev) | ("think", text) | ("done", dict)"""
+    import ollama, re
+
+    # Build messages with conversation history
+    messages = list(history or [])
+    # Replace last user message with task-formatted version
+    if messages and messages[-1]["role"] == "user":
+        messages[-1] = {"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"}
+    else:
+        messages.append({"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"})
+    skill_events, think_events = [], []
+    tool_count = 0
+    last_reply = ""
+    first_call = True
+
+    while tool_count < 20:
+        msgs_with_system = [{"role": "system", "content": system}] + messages
+
+        if first_call:
+            first_call = False
+            stream = await asyncio.to_thread(
+                ollama.chat, model=model, messages=msgs_with_system,
+                stream=True,
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+            )
+            collected = []
+            async for chunk in _iter_stream(stream):
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    collected.append(token)
+                    yield ("token", token)
+            raw = "".join(collected)
+        else:
+            resp = await asyncio.to_thread(
+                ollama.chat, model=model, messages=msgs_with_system,
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+            )
+            raw = resp["message"]["content"]
+
+        last_reply = raw
+        think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
+        reply = raw
+        if think_m:
+            think_events.append(think_m.group(1).strip()[:400])
+            reply = raw.replace(think_m.group(0), "").strip()
+            yield ("think", think_m.group(1).strip()[:400])
+
+        messages.append({"role": "assistant", "content": raw})
+
+        final_m = re.search(r"FINAL:[\s\n]*(.*)", reply, re.DOTALL)
+        if final_m:
+            yield ("done", {"output": final_m.group(1).strip(), "success": True,
+                            "tool_calls": tool_count, "model": model})
+            return
+
+        skill_m = re.search(r"SKILL:\s*(\{.*?\})", reply, re.DOTALL)
+        if skill_m:
+            try:
+                sc = json.loads(skill_m.group(1))
+                yield ("skill", sc)
+                res = await asyncio.to_thread(registry.run, sc["name"], **sc.get("args", {}))
+                res_str = str(res)[:6000]
+                messages.append({"role": "user", "content": f"Skill result:\n{res_str}\n\nContinue."})
+                tool_count += 1
+                continue
+            except Exception as e:
+                messages.append({"role": "user", "content": f"Skill error: {e}. Try another."})
+                tool_count += 1
+                continue
+
+        if last_reply.strip():
+            yield ("done", {"output": last_reply.strip(), "success": True,
+                            "tool_calls": tool_count, "model": model})
+            return
+
+        messages.append({"role": "user", "content": "Continue. SKILL: or FINAL: required."})
+
+    yield ("done", {"output": last_reply.strip() or "Something went wrong — please try again.",
+                    "success": bool(last_reply.strip()), "tool_calls": tool_count, "model": model})
 
 async def _run_model(prompt, model, system, budget):
     import ollama, re

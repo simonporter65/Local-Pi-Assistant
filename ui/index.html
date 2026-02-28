@@ -326,7 +326,25 @@
   .msg-row.user.consecutive .bubble { border-top-right-radius: 4px; }
 
   /* ── Status / stage message ── */
-  .bubble.status-msg {
+  .bubble.streaming { opacity: 0.95; }
+.stream-cursor {
+  display: inline-block;
+  animation: blink 0.8s infinite;
+  color: #88aaff;
+  margin-left: 2px;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.quick-ack-bubble {
+  font-style: italic;
+  font-size: 0.85em;
+  opacity: 0.7;
+  background: transparent !important;
+  padding: 2px 8px !important;
+}
+.status-msg {
     background: transparent;
     border: 1px solid var(--border);
     color: var(--text-muted);
@@ -694,6 +712,7 @@ function timeNow() {
 // Message rendering
 // ─────────────────────────────────────────────
 function appendMessage(sender, content, type = 'normal', opts = {}) {
+  if (!content && type === 'status') return null;
   const container = document.getElementById('messages');
   const isUser = sender === 'user';
   const consecutive = lastSender === sender && type === 'normal';
@@ -713,6 +732,9 @@ function appendMessage(sender, content, type = 'normal', opts = {}) {
   } else if (type === 'skill') {
     bubbleClass += ' skill-msg';
     bubbleContent = `⚙ ${escHtml(content)}`;
+  } else if (type === 'quick_ack') {
+    bubbleClass += ' quick-ack-bubble';
+    bubbleContent = escHtml(content);
   } else if (type === 'think') {
     bubbleClass += ' think-msg';
     bubbleContent = `💭 ${escHtml(content.substring(0, 300))}${content.length > 300 ? '...' : ''}`;
@@ -802,6 +824,11 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   input.rows = 1;
+  currentStageEl = null;
+  streamingBubbleEl = null;
+  streamingBubbleRow = null;
+  streamingText = '';
+  quickAckEl = null;
   isProcessing = true;
   currentStageEl = null;
   document.getElementById('sendBtn').disabled = true;
@@ -856,12 +883,45 @@ async function sendMessage() {
 // Stream event handler
 // ─────────────────────────────────────────────
 let currentStageEl = null;
+let streamingBubbleEl = null;
+let streamingBubbleRow = null;
+let streamingText = '';
+let quickAckEl = null;
 
 function handleStreamEvent(event, stageEl) {
   switch (event.type) {
 
+    case 'quick_ack':
+      if (event.message) {
+        quickAckEl = appendMessage('agent', event.message, 'quick_ack');
+      }
+      break;
+
+    case 'token':
+      if (!streamingBubbleEl) {
+        if (quickAckEl) { removeElement(quickAckEl); quickAckEl = null; }
+        if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
+        const row = document.createElement('div');
+        row.className = 'msg-row agent';
+        const av = document.createElement('div');
+        av.className = 'msg-avatar-sm';
+        av.textContent = '🤖';
+        const wrap = document.createElement('div');
+        wrap.className = 'bubble-wrap';
+        streamingBubbleEl = document.createElement('div');
+        streamingBubbleEl.className = 'bubble streaming';
+        wrap.appendChild(streamingBubbleEl);
+        row.appendChild(av);
+        row.appendChild(wrap);
+        document.getElementById('messages').appendChild(row);
+        streamingBubbleRow = row;
+      }
+      streamingText += event.text;
+      streamingBubbleEl.innerHTML = renderMarkdown(streamingText) + '<span class="stream-cursor">▋</span>';
+      scrollToBottom();
+      break;
+
     case 'stage':
-      // Replace previous status bubble with new one
       if (currentStageEl) removeElement(currentStageEl);
       currentStageEl = appendMessage('agent', event.message, 'status');
       event._el = currentStageEl;
@@ -885,10 +945,23 @@ function handleStreamEvent(event, stageEl) {
       break;
 
     case 'final':
-      if (currentStageEl) removeElement(currentStageEl);
-      currentStageEl = null;
+      if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
+      if (quickAckEl) { removeElement(quickAckEl); quickAckEl = null; }
       hideTyping();
-      appendMessage('agent', event.message);
+      if (streamingBubbleRow && event.message) {
+        streamingBubbleEl.classList.remove('streaming');
+        streamingBubbleEl.innerHTML = renderMarkdown(event.message);
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.textContent = timeNow();
+        streamingBubbleRow.querySelector('.bubble-wrap').appendChild(timeEl);
+        scrollToBottom();
+      } else if (event.message) {
+        appendMessage('agent', event.message);
+      }
+      streamingBubbleEl = null;
+      streamingBubbleRow = null;
+      streamingText = '';
       break;
 
     case 'proactive':
