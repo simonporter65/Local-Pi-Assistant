@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
         user_model=user_model,
         broadcast_fn=broadcast,
     )
-    asyncio.create_task(heartbeat.run(), name="heartbeat")
+    # asyncio.create_task(heartbeat.run(), name="heartbeat")  # disabled for testing
 
     name = personality.name or "Assistant"
     print(f"[SERVER] Ready → http://localhost:8765")
@@ -202,9 +202,9 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
 
     yield sse("stage", message="Reading your message...")
     await asyncio.sleep(0)
-
-    intent   = await asyncio.to_thread(classify_intent, user_message)
-    category = intent.get("category", "general_chat")
+    # Hardcoded routing — bypass 0.5b classifier until more models loaded
+    intent   = {"category": "general_chat", "confidence": 1.0, "latency": "fast"}
+    category = "general_chat"
 
     yield sse("stage", message="Remembering what I know about you...")
     await asyncio.sleep(0)
@@ -212,15 +212,14 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
     user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
     await asyncio.to_thread(user_model.extract_from_message, user_message)
 
-    route   = route_to_model(intent)
-    model   = route["model"]
-    latency = route["latency"]
-    budget  = get_token_budget(latency, category)
+    model   = "llama3.2:3b"
+    latency = "fast"
+    budget  = 512
 
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
 
-    rewritten = await asyncio.to_thread(rewrite_prompt, user_message, intent)
+    rewritten = user_message  # skip rewrite to avoid 0.5b call
     past = await asyncio.to_thread(memory.semantic_search, user_message, 3)
     past_ctx = "\n".join([
         f"- '{p['input'][:50]}' → '{p['output'][:80]}'"
@@ -248,12 +247,14 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
             if result.get("success"):
                 break
         except Exception as e:
+            print(f"[CHAT ERROR] attempt {attempt}: {type(e).__name__}: {e}", flush=True)
             rewritten = f"Error: {e}\nOriginal: {user_message}\nTry differently."
 
+    print(f"[DEBUG] result={result}", flush=True)
     yield sse("stage_done", message="Done")
 
     final = (result or {}).get("output", "Something went wrong — please try again.")
-    final = await asyncio.to_thread(user_model.personalise_response, user_message, final)
+    final = final  # skip personalise_response (uses 0.5b, causes hang)
 
     yield sse("final", message=final)
 
@@ -299,13 +300,15 @@ async def _run_model(prompt, model, system, budget):
     last_reply = ""
 
     while tool_count < 20:
+        msgs_with_system = [{"role": "system", "content": system}] + messages
         resp = await asyncio.to_thread(
-            ollama.chat, model=model, messages=messages, system=system,
+            ollama.chat, model=model, messages=msgs_with_system,
             options={"temperature": 0.7, "num_predict": budget,
-                     "num_ctx": 8192, "num_gpu": 999}
+                     "num_ctx": 4096}
         )
         raw = resp["message"]["content"]
         last_reply = raw
+        print(f"[DEBUG RAW] {repr(raw[:200])}", flush=True)
 
         think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
         reply = raw
@@ -315,7 +318,7 @@ async def _run_model(prompt, model, system, budget):
 
         messages.append({"role": "assistant", "content": raw})
 
-        final_m = re.search(r"FINAL:\s*(.*)", reply, re.DOTALL)
+        final_m = re.search(r"FINAL:[\s\n]*(.*)", reply, re.DOTALL)
         if final_m:
             return (
                 {"output": final_m.group(1).strip(), "success": True,
@@ -342,9 +345,23 @@ async def _run_model(prompt, model, system, budget):
                 tool_count += 1
                 continue
 
+        # Model gave plain response — accept it directly
+        if last_reply.strip():
+            return (
+                {"output": last_reply.strip(), "success": True,
+                 "tool_calls": tool_count, "model": model},
+                skill_events, think_events,
+            )
         messages.append({"role": "user",
                          "content": "Continue. SKILL: or FINAL: required."})
 
+    # Accept plain response if model didn't use FINAL: format
+    if last_reply.strip():
+        return (
+            {"output": last_reply.strip(), "success": True,
+             "tool_calls": tool_count, "model": model},
+            skill_events, think_events,
+        )
     return (
         {"output": last_reply.strip(), "success": False,
          "tool_calls": tool_count, "model": model},

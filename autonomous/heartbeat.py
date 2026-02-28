@@ -29,7 +29,7 @@ from autonomous.task_queue import TaskQueue, _in_hours, _in_minutes
 HEARTBEAT_INTERVAL   = 5 * 60   # Check queue every 5 minutes
 USER_PAUSE_COOLDOWN  = 30       # Wait 30s after user interaction before resuming
 MAX_TASK_DURATION    = 10 * 60  # Kill a task after 10 minutes
-BACKGROUND_MODEL     = "qwen2.5:7b"  # Lighter model for background, save RAM for user
+BACKGROUND_MODEL     = "llama3.2:3b"  # Lighter model for background, save RAM for user
 BACKGROUND_MODEL_FALLBACK = "llama3.1:8b"
 
 # Token budget for background tasks — don't be greedy

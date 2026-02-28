@@ -1,64 +1,61 @@
 """
-core/router.py
-Routes tasks to the best available model.
-14B models are used freely for agentic/slow tasks.
+core/router.py — Dynamic routing based on installed models
 """
+import subprocess
+import json
 
-# Full routing table
-# latency: instant (<3s), fast (<15s), normal (<60s), slow (ok for agentic)
-MODEL_MAP = {
-    # ── Instant: classifier pipeline (0.5b stays hot in RAM) ──
-    "intent_classification":  {"model": "qwen2.5:0.5b",          "latency": "instant"},
-    "prompt_rewriting":       {"model": "qwen2.5:0.5b",          "latency": "instant"},
-    "sentiment_analysis":     {"model": "qwen2.5:0.5b",          "latency": "instant"},
-    "safety_check":           {"model": "qwen2.5:0.5b",          "latency": "instant"},
+def get_installed_models() -> list:
+    try:
+        result = subprocess.run(['ollama', 'list'], capture_output=True, text=True)
+        lines = result.stdout.strip().split('\n')[1:]  # skip header
+        return [line.split()[0] for line in lines if line.strip()]
+    except:
+        return []
 
-    # ── Fast: simple, well-scoped tasks ──
-    "general_chat":           {"model": "llama3.2:3b",           "latency": "fast"},
-    "summarization":          {"model": "llama3.2:3b",           "latency": "fast"},
-    "task_management":        {"model": "llama3.2:3b",           "latency": "fast"},
-    "translation":            {"model": "qwen2.5:3b",            "latency": "fast"},
-
-    # ── Normal: capable 8B ──
-    "web_search":             {"model": "llama3.1:8b",           "latency": "normal"},
-    "image_description":      {"model": "llava:7b",              "latency": "normal"},
-
-    # ── Slow / Agentic: 14B for anything that matters ──
-    "coding":                 {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "debugging":              {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "shell_command":          {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "skill_writing":          {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "structured_output":      {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "file_management":        {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "data_analysis":          {"model": "qwen2.5-coder:14b",     "latency": "slow"},
-    "math":                   {"model": "deepseek-r1:14b",       "latency": "slow"},
-    "reasoning":              {"model": "deepseek-r1:14b",       "latency": "slow"},
-    "error_recovery":         {"model": "deepseek-r1:14b",       "latency": "slow"},
-    "planning":               {"model": "phi4:14b",              "latency": "slow"},
-    "research":               {"model": "qwen2.5:14b",           "latency": "slow"},
-    "creative_writing":       {"model": "qwen2.5:14b",           "latency": "slow"},
-    "agentic_task":           {"model": "qwen2.5:14b",           "latency": "slow"},
-    "screenshot_analysis":    {"model": "llama3.2-vision:11b",   "latency": "slow"},
+# Priority order — first installed model in each tier wins
+TIER_PREFERENCES = {
+    "fast":   ["llama3.2:3b", "llama3.2:1b", "qwen2.5:3b", "qwen2.5:0.5b"],
+    "normal": ["llama3.1:8b", "mistral:7b", "qwen2.5:7b", "llama3.2:3b"],
+    "coding": ["qwen2.5-coder:7b", "qwen2.5-coder:14b", "llama3.1:8b", "llama3.2:3b"],
+    "slow":   ["qwen2.5:14b", "phi4:14b", "deepseek-r1:14b", "llama3.1:8b", "llama3.2:3b"],
 }
 
-# Fallback chains: if primary OOMs or fails, try these in order
-FALLBACK_CHAINS = {
-    "qwen2.5-coder:14b":   ["qwen2.5-coder:7b",  "llama3.1:8b",  "llama3.2:3b"],
-    "deepseek-r1:14b":     ["deepseek-r1:7b",     "qwen2.5:7b",   "llama3.1:8b"],
-    "phi4:14b":            ["mistral-nemo:12b",   "mistral:7b",   "llama3.1:8b"],
-    "qwen2.5:14b":         ["qwen2.5:7b",         "llama3.1:8b",  "llama3.2:3b"],
-    "llama3.2-vision:11b": ["llava:7b",           "llama3.2:3b"],
-    "llama3.1:8b":         ["llama3.2:3b"],
-    "llava:7b":            ["llama3.2:3b"],
+CATEGORY_TIER = {
+    "general_chat":       "fast",
+    "summarization":      "fast",
+    "translation":        "fast",
+    "sentiment_analysis": "fast",
+    "web_search":         "normal",
+    "research":           "normal",
+    "planning":           "normal",
+    "data_analysis":      "normal",
+    "file_management":    "normal",
+    "task_management":    "normal",
+    "creative_writing":   "normal",
+    "coding":             "coding",
+    "debugging":          "coding",
+    "shell_command":      "coding",
+    "math":               "coding",
+    "skill_writing":      "slow",
+    "agentic_task":       "slow",
+    "reasoning":          "slow",
 }
-
-DEFAULT = {"model": "llama3.1:8b", "latency": "normal"}
-
 
 def route_to_model(intent: dict) -> dict:
     category = intent.get("category", "general_chat")
-    return MODEL_MAP.get(category, DEFAULT)
+    tier = CATEGORY_TIER.get(category, "fast")
+    installed = get_installed_models()
 
+    for model in TIER_PREFERENCES.get(tier, TIER_PREFERENCES["fast"]):
+        if model in installed:
+            return {"model": model, "tier": tier, "latency": tier}
+
+    # Last resort — whatever is installed
+    if installed:
+        return {"model": installed[0], "tier": "fast", "latency": "fast"}
+
+    return {"model": "llama3.2:3b", "tier": "fast", "latency": "fast"}
 
 def get_fallback(model: str) -> list:
-    return FALLBACK_CHAINS.get(model, ["llama3.1:8b", "llama3.2:3b"])
+    installed = get_installed_models()
+    return [m for m in installed if m != model]

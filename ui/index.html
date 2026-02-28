@@ -640,7 +640,7 @@
 // ─────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────
-const API = 'http://localhost:8765';
+const API = `${window.location.protocol}//${window.location.hostname}:8765`;
 let isProcessing = false;
 let lastSender = null;
 let userProfile = {};
@@ -803,12 +803,13 @@ async function sendMessage() {
   input.style.height = 'auto';
   input.rows = 1;
   isProcessing = true;
+  currentStageEl = null;
   document.getElementById('sendBtn').disabled = true;
 
   appendMessage('user', text);
 
-  // Stage 1 — show immediately
-  const s1 = appendMessage('agent', 'Reading your message...', 'status');
+  // Stage bubble created by stream
+  const s1 = null;
 
   // Connect to streaming status endpoint
   try {
@@ -971,6 +972,7 @@ document.getElementById('messageInput').addEventListener('input', function() {
 document.getElementById('messageInput').addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    e.stopPropagation();
     sendMessage();
   }
 });
