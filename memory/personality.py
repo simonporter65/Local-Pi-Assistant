@@ -138,7 +138,8 @@ class PersonalityConfig:
 
         # Only show skill format for categories that need tools
         skill_categories = {"web_search", "research", "coding", "debugging", "planning",
-                            "agentic_task", "data_analysis", "file_management", "shell_command",
+                            "agentic_task", "web_browsing", "data_analysis",
+                            "file_management", "shell_command",
                             "screenshot_analysis", "image_description"}
         if category in skill_categories:
             skills_section = f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""

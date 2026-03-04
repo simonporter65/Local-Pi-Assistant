@@ -40,7 +40,8 @@ MODEL_MAP = {
     "creative_writing":       {"model": "llama3.1:8b",         "latency": "normal"},
     "image_description":      {"model": "llama3.2-vision:11b", "latency": "slow"},
 
-    # Slow: specialist models
+    # Slow: specialist models — browser automation needs coder for reliable JSON/selectors
+    "web_browsing":           {"model": "qwen2.5-coder:7b",    "latency": "slow"},
     "coding":                 {"model": "qwen2.5-coder:7b",    "latency": "slow"},
     "debugging":              {"model": "qwen2.5-coder:7b",    "latency": "slow"},
     "shell_command":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},

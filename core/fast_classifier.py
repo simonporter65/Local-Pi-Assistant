@@ -40,6 +40,19 @@ MATH_WORDS = {
 
 CREATIVE_WORDS = {"poem", "story", "fiction", "imagine", "invent", "creative"}
 
+AGENTIC_WORDS = {
+    "screenshot", "scrape", "automate", "browser",
+    "download", "extract", "monitor",
+}
+
+AGENTIC_PHRASES = [
+    "browse ", "visit ", "open the ", "go to ", "navigate to ",
+    "click on", "fill in", "fill out", "submit the form",
+    "http://", "https://", ".com/", ".org/", ".net/",
+    "the website", "this website", "this page", "this url",
+    "check the site", "check this link",
+]
+
 # Messages that are conversational — skip expensive routing
 CHAT_PHRASES = [
     "do you", "can you", "you ", "your ", "remember", "know about",
@@ -94,6 +107,12 @@ def fast_classify(message: str) -> dict:
     if words & CREATIVE_WORDS:
         return {"category": "creative_writing", "confidence": 0.85,
                 "needs_tools": False, "rewritten": message,
+                "facts": [], "_source": "heuristic"}
+
+    # Browser / agentic task detection — URLs or explicit browse/automate intent
+    if words & AGENTIC_WORDS or any(p in msg for p in AGENTIC_PHRASES):
+        return {"category": "web_browsing", "confidence": 0.85,
+                "needs_tools": True, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
     return {"category": "general_chat", "confidence": 0.7,

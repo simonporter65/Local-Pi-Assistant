@@ -249,9 +249,13 @@ async def event_stream(request: Request):
 
 # ── Conversation history (keyed by session) ─────────────────────────────────
 _session_histories: dict = {}
+_session_last_used: dict = {}
 MAX_HISTORY = 6
+MAX_SESSIONS = 50       # Cap total sessions in memory
+SESSION_TTL  = 3600     # Drop sessions idle > 1 hour
 
 def _get_history(session_id: str) -> list:
+    _session_last_used[session_id] = time.time()
     return _session_histories.setdefault(session_id, [])
 
 def _add_to_history(session_id: str, role: str, msg: str):
@@ -259,6 +263,14 @@ def _add_to_history(session_id: str, role: str, msg: str):
     h.append({"role": role, "content": msg})
     if len(h) > MAX_HISTORY * 2:
         del h[:-MAX_HISTORY * 2]
+    # Prune stale sessions if we're over the cap
+    if len(_session_histories) > MAX_SESSIONS:
+        now = time.time()
+        stale = [sid for sid, ts in _session_last_used.items()
+                 if now - ts > SESSION_TTL]
+        for sid in stale:
+            _session_histories.pop(sid, None)
+            _session_last_used.pop(sid, None)
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
@@ -325,8 +337,9 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
         past_ctx = "None yet." 
 
     skills_list = registry.list_skills() if category in {
-        "research", "coding", "debugging", "agentic_task", "data_analysis",
-        "file_management", "shell_command", "screenshot_analysis", "image_description"
+        "research", "coding", "debugging", "agentic_task", "web_browsing",
+        "data_analysis", "file_management", "shell_command",
+        "screenshot_analysis", "image_description"
     } else ""
     system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx, skills_list)
 
@@ -370,7 +383,8 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
 
     # Use skills for agentic categories (not web_search — handled above)
     use_skills = category in {"research", "coding", "debugging",
-                              "agentic_task", "data_analysis", "file_management", "shell_command",
+                              "agentic_task", "web_browsing", "data_analysis",
+                              "file_management", "shell_command",
                               "screenshot_analysis", "image_description"}
     try:
         async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id), use_skills=use_skills):
