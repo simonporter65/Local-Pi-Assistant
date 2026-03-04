@@ -562,6 +562,8 @@
   .send-btn:hover { transform: scale(1.05); box-shadow: 0 0 14px var(--accent-glow); }
   .send-btn:active { transform: scale(0.95); }
   .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .send-btn.is-stop { background: #e05; color: #fff; }
+  .send-btn.is-stop:hover { background: #c04; box-shadow: 0 0 14px rgba(238,0,85,0.5); }
 
   /* ── Markdown in bubbles ── */
   .bubble p { margin: 0 0 8px; }
@@ -718,10 +720,12 @@
           autocomplete="off"
           spellcheck="true"
         ></textarea>
-        <button class="send-btn" id="sendBtn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+        <button class="send-btn" id="sendBtn" title="Send message">
+          <span id="sendBtnIcon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
         </button>
       </div>
     </div>
@@ -741,6 +745,7 @@ const SESSION_ID = localStorage.getItem('arc_session') || (() => {
 let isProcessing = false;
 let lastSender = null;
 let userProfile = {};
+let currentAbortController = null;
 
 // ─────────────────────────────────────────────
 // Markdown renderer (simple, no deps)
@@ -898,8 +903,34 @@ function hideTyping() {
 // ─────────────────────────────────────────────
 // Send message
 // ─────────────────────────────────────────────
+function _setStopMode(on) {
+  const btn = document.getElementById('sendBtn');
+  const icon = document.getElementById('sendBtnIcon');
+  if (on) {
+    btn.classList.add('is-stop');
+    btn.title = 'Stop generating';
+    icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="10" height="10" rx="1.5"/></svg>';
+  } else {
+    btn.classList.remove('is-stop');
+    btn.title = 'Send message';
+    btn.disabled = false;
+    icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+}
+
+function stopGeneration() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+}
+
 async function sendMessage() {
-  if (isProcessing) return;
+  // If stop mode — abort current generation
+  if (isProcessing) {
+    stopGeneration();
+    return;
+  }
 
   const input = document.getElementById('messageInput');
   const text = input.value.trim();
@@ -914,25 +945,30 @@ async function sendMessage() {
   streamingText = '';
   quickAckEl = null;
   isProcessing = true;
-  document.getElementById('sendBtn').disabled = true;
+  _setStopMode(true);
   currentStageEl = null;
   // Safety net — always unlock after 3 minutes max
   setTimeout(() => {
-    isProcessing = false;
-    document.getElementById('sendBtn').disabled = false;
-    }, 180000);
+    if (isProcessing) {
+      stopGeneration();
+      isProcessing = false;
+      _setStopMode(false);
+    }
+  }, 180000);
 
   appendMessage('user', text);
 
   // Stage bubble created by stream
   const s1 = null;
 
-  // Connect to streaming status endpoint
+  // Connect to streaming endpoint with abort support
+  currentAbortController = new AbortController();
   try {
     const resp = await fetch(`${API}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ message: text }),
+      signal: currentAbortController.signal,
     });
 
     const reader = resp.body.getReader();
@@ -958,12 +994,15 @@ async function sendMessage() {
       }
     }
   } catch (err) {
-    removeElement(s1);
-    appendMessage('agent', `Connection error: ${err.message}. Is the agent running?`);
+    if (err.name !== 'AbortError') {
+      removeElement(s1);
+      appendMessage('agent', `Connection error: ${err.message}. Is the agent running?`);
+    }
   }
 
+  currentAbortController = null;
   isProcessing = false;
-  document.getElementById('sendBtn').disabled = false;
+  _setStopMode(false);
   hideTyping();
 }
 
