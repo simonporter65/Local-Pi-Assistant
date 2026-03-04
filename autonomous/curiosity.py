@@ -29,7 +29,7 @@ GAPS_TO_CHECK = [
     ("goals", "what they are trying to achieve"),
 ]
 
-def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen2.5:0.5b") -> str | None:
+def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen3:0.6b") -> str | None:
     """Returns a question to ask the user, or None if nothing needed."""
     import ollama
 
@@ -59,7 +59,8 @@ def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen2.5:0
                 known_facts=known_facts[:400],
                 gaps=gaps_str,
             ),
-            options={"temperature": 0.8, "num_predict": 40, "num_ctx": 512}
+            options={"temperature": 0.8, "num_predict": 40, "num_ctx": 512},
+            think=False,
         )
         question = resp["response"].strip()
         if len(question) > 5 and "?" in question:

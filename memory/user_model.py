@@ -137,12 +137,13 @@ class UserModel:
         """Deeper LLM-based extraction from the full exchange."""
         try:
             resp = ollama.generate(
-                model="qwen2.5:0.5b",
+                model="qwen3:0.6b",
                 prompt=EXTRACT_PROMPT.format(
                     user_msg=user_message[:500],
                     assistant_msg=assistant_response[:300],
                 ),
-                options={"temperature": 0.1, "num_predict": 400, "num_ctx": 1024}
+                options={"temperature": 0.1, "num_predict": 400, "num_ctx": 1024},
+                think=False,
             )
             text = resp["response"].strip()
             # Find JSON array
@@ -344,13 +345,14 @@ class UserModel:
 
         try:
             resp = ollama.generate(
-                model="qwen2.5:0.5b",
+                model="qwen3:0.6b",
                 prompt=PERSONALISE_PROMPT.format(
                     user_context=user_context[:600],
                     user_message=user_message[:200],
                     response=response[:800],
                 ),
-                options={"temperature": 0.4, "num_predict": 600, "num_ctx": 2048}
+                options={"temperature": 0.4, "num_predict": 600, "num_ctx": 2048},
+                think=False,
             )
             result = resp["response"].strip()
             # Sanity: if output is much shorter, use original

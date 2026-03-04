@@ -95,15 +95,15 @@ async def lifespan(app: FastAPI):
         import ollama
         while True:
             await asyncio.sleep(180)
-            for mdl in ["qwen3:0.6b", "qwen2.5:0.5b"]:
-                try:
-                    await asyncio.to_thread(
-                        ollama.generate, model=mdl,
-                        prompt="hi", options={"num_predict": 1, "num_ctx": 64}
-                    )
-                    print(f"[KEEPALIVE] {mdl} warmed", flush=True)
-                except Exception:
-                    pass
+            try:
+                await asyncio.to_thread(
+                    ollama.generate, model="qwen3:0.6b",
+                    prompt="hi", options={"num_predict": 1, "num_ctx": 64},
+                    think=False,
+                )
+                print("[KEEPALIVE] qwen3:0.6b warmed", flush=True)
+            except Exception:
+                pass
             try:
                 await asyncio.to_thread(ollama.embeddings, model="nomic-embed-text", prompt="hi")
                 print("[KEEPALIVE] nomic-embed-text warmed", flush=True)
@@ -117,15 +117,15 @@ async def lifespan(app: FastAPI):
 
     # Warm key models before announcing readiness — first message will be instant
     import ollama as _ollama
-    for _mdl in ["qwen3:0.6b", "qwen2.5:0.5b"]:
-        try:
-            await asyncio.to_thread(
-                _ollama.generate, model=_mdl,
-                prompt="hi", options={"num_predict": 1, "num_ctx": 64}
-            )
-            print(f"[SERVER] Warmed {_mdl}", flush=True)
-        except Exception as _e:
-            print(f"[SERVER] Could not warm {_mdl}: {_e}", flush=True)
+    try:
+        await asyncio.to_thread(
+            _ollama.generate, model="qwen3:0.6b",
+            prompt="hi", options={"num_predict": 1, "num_ctx": 64},
+            think=False,
+        )
+        print("[SERVER] Warmed qwen3:0.6b", flush=True)
+    except Exception as _e:
+        print(f"[SERVER] Could not warm qwen3:0.6b: {_e}", flush=True)
     # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")

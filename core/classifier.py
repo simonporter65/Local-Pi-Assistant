@@ -37,16 +37,17 @@ JSON format: {{"category": "<category>", "confidence": <0.0-1.0>, "subtask": "<1
 def classify_intent(user_input: str) -> dict:
     try:
         response = ollama.generate(
-            model="qwen2.5:0.5b",
+            model="qwen3:0.6b",
             prompt=CLASSIFIER_PROMPT.format(
                 categories=", ".join(CATEGORIES),
-                input=user_input[:500],  # truncate huge inputs
+                input=user_input[:500],
             ),
             options={
                 "temperature": 0.1,
                 "num_predict": 120,
                 "num_ctx": 1024,
-            }
+            },
+            think=False,
         )
 
         text = response["response"].strip()

@@ -90,13 +90,14 @@ class ProactiveEngine:
 
         try:
             resp = ollama.generate(
-                model="qwen2.5:0.5b",
+                model="qwen3:0.6b",
                 prompt=SIDEBAR_SUGGESTIONS_PROMPT.format(
                     user_context=user_context[:600],
                     recent_summary=recent[:300],
                     time_str=time_str,
                 ),
-                options={"temperature": 0.7, "num_predict": 400, "num_ctx": 1500}
+                options={"temperature": 0.7, "num_predict": 400, "num_ctx": 1500},
+                think=False,
             )
             text = resp["response"].strip()
             match = re.search(r"\[.*\]", text, re.DOTALL)
@@ -147,13 +148,14 @@ class ProactiveEngine:
 
         try:
             resp = ollama.generate(
-                model="qwen2.5:0.5b",
+                model="qwen3:0.6b",
                 prompt=PROACTIVE_PUSH_PROMPT.format(
                     user_context=user_context[:400],
                     user_message=user_message[:200],
                     response_summary=assistant_response[:200],
                 ),
-                options={"temperature": 0.5, "num_predict": 200, "num_ctx": 1500}
+                options={"temperature": 0.5, "num_predict": 200, "num_ctx": 1500},
+                think=False,
             )
             text = resp["response"].strip()
             match = re.search(r"\{.*\}", text, re.DOTALL)
