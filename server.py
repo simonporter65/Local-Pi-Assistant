@@ -499,6 +499,21 @@ async def _iter_stream(stream):
         await asyncio.sleep(0)  # yield control back to event loop between chunks
 
 
+def _needed_ctx(system: str, messages: list, budget: int) -> int:
+    """Estimate minimum num_ctx needed and snap to a discrete level.
+
+    Smaller num_ctx = smaller KV cache allocation = faster prefill and lower RAM.
+    We snap to powers-of-2-ish levels to avoid model reloads on minor size changes.
+    """
+    total_chars = len(system) + sum(len(m.get("content", "")) for m in messages)
+    input_tokens = total_chars // 4 + 64  # rough chars→tokens + safety margin
+    needed = input_tokens + budget
+    for level in (1024, 2048, 4096, 8192):
+        if needed <= level:
+            return level
+    return 8192
+
+
 async def _run_model_streaming(prompt, model, system, budget, history=None,
                                use_skills=False, use_thinking=False):
     """Stream tokens from the model.
@@ -539,10 +554,11 @@ async def _run_model_streaming(prompt, model, system, budget, history=None,
 
         if first_call:
             first_call = False
+            num_ctx = _needed_ctx(system, msgs_with_system, budget)
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": num_ctx},
                 **think_kwargs,
             )
             collected = []
@@ -574,9 +590,10 @@ async def _run_model_streaming(prompt, model, system, budget, history=None,
                     yield ("token", token)
             raw = "".join(collected)
         else:
+            num_ctx = _needed_ctx(system, msgs_with_system, budget)
             resp = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": num_ctx},
                 **think_kwargs,
             )
             raw = resp["message"].get("content") or ""

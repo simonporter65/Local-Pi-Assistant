@@ -923,6 +923,24 @@ function stopGeneration() {
     currentAbortController.abort();
     currentAbortController = null;
   }
+  // Remove "ARC is thinking…" stage and quick_ack bubbles
+  if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
+  if (quickAckEl)     { removeElement(quickAckEl);     quickAckEl = null; }
+  // Collapse thinking widget (keep it visible so user can still read reasoning)
+  if (thinkingWidgetEl) {
+    thinkingWidgetEl.querySelector('summary').innerHTML = '💭 See reasoning';
+    thinkingWidgetEl.open = false;
+    thinkingWidgetEl = null;
+    thinkingBodyEl   = null;
+  }
+  // Finalise any partial streaming bubble — strip cursor and mark done
+  if (streamingBubbleEl) {
+    streamingBubbleEl.classList.remove('streaming');
+    streamingBubbleEl.innerHTML = renderMarkdown(streamingText) + ' <span style="opacity:.5;font-size:.85em">[stopped]</span>';
+    streamingBubbleEl  = null;
+    streamingBubbleRow = null;
+    streamingText = '';
+  }
 }
 
 async function sendMessage() {
