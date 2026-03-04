@@ -288,6 +288,13 @@ async def chat(request: Request):
     )
 
 
+@app.post("/chat/stop")
+async def chat_stop():
+    """Called by the UI when the user hits the stop button. Immediately resumes heartbeat."""
+    heartbeat.resume_after_user()
+    return {"ok": True}
+
+
 async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncGenerator[str, None]:
     def sse(t, **kw):
         print(f"[SSE] {t}: {kw}", flush=True)

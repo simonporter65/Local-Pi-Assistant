@@ -922,6 +922,8 @@ function stopGeneration() {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
+    // Immediately resume heartbeat — don't wait for the server stream to drain
+    fetch(`${API}/chat/stop`, { method: 'POST' }).catch(() => {});
   }
   // Remove "ARC is thinking…" stage and quick_ack bubbles
   if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
