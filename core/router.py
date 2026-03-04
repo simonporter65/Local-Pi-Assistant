@@ -38,7 +38,7 @@ MODEL_MAP = {
     "research":               {"model": "llama3.1:8b",         "latency": "normal"},
     "planning":               {"model": "llama3.1:8b",         "latency": "normal"},
     "creative_writing":       {"model": "llama3.1:8b",         "latency": "normal"},
-    "image_description":      {"model": "llava:7b",            "latency": "normal"},
+    "image_description":      {"model": "qwen3.5:0.8b",        "latency": "fast"},
 
     # Slow: specialist models
     "coding":                 {"model": "qwen2.5-coder:7b",    "latency": "slow"},
@@ -52,7 +52,7 @@ MODEL_MAP = {
     "reasoning":              {"model": "deepseek-r1:7b",      "latency": "slow"},
     "error_recovery":         {"model": "deepseek-r1:7b",      "latency": "slow"},
     "agentic_task":           {"model": "llama3.1:8b",         "latency": "slow"},
-    "screenshot_analysis":    {"model": "llava:7b",            "latency": "slow"},
+    "screenshot_analysis":    {"model": "qwen3.5:0.8b",        "latency": "fast"},
 }
 
 # Fallback chains: if primary not installed or fails, try these in order

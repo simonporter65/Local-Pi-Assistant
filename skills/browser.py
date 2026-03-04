@@ -6,8 +6,9 @@ Supports navigation, clicking, typing, screenshots, and content extraction.
 
 DESCRIPTION = (
     "Control a headless browser. "
-    "Args: action (goto|screenshot|extract|click|type|scroll|pdf), "
-    "url (str), selector (str), text (str), save_path (str), scroll_px (int)"
+    "Args: action (browse|goto|screenshot|extract|click|type|scroll|pdf), "
+    "url (str), selector (str), text (str), save_path (str), scroll_px (int). "
+    "'browse' = navigate + extract text + screenshot in one call, returns both."
 )
 
 import os
@@ -50,7 +51,32 @@ def run(
         page = context.new_page()
 
         try:
-            if action == "goto":
+            if action == "browse":
+                # One-shot: navigate + extract readable text + take screenshot
+                if not url:
+                    return "ERROR: url required for browse"
+                page.goto(url, timeout=25000, wait_until="domcontentloaded")
+                # Extract clean text
+                page.evaluate("""() => {
+                    ['script','style','nav','footer','header','aside'].forEach(tag => {
+                        document.querySelectorAll(tag).forEach(el => el.remove())
+                    })
+                }""")
+                content = page.inner_text("body")
+                if len(content) > 4000:
+                    content = content[:4000] + f"\n...[{len(content)} total chars]"
+                # Take screenshot
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                shot_path = os.path.join(SCREENSHOT_DIR, f"browse_{ts}.png")
+                page.screenshot(path=shot_path, full_page=False)  # viewport only — faster
+                title = page.title()
+                return (
+                    f"URL: {page.url}\nTitle: {title}\n"
+                    f"Screenshot: {shot_path}\n\n"
+                    f"--- PAGE TEXT ---\n{content}"
+                )
+
+            elif action == "goto":
                 page.goto(url, timeout=20000, wait_until="domcontentloaded")
                 return f"Loaded: {page.title()} — {page.url}"
 
