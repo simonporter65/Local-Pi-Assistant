@@ -31,7 +31,7 @@ from autonomous.training_curator import curate_training_data, should_ask_opt_in,
 HEARTBEAT_INTERVAL   = 5 * 60   # Check queue every 5 minutes
 USER_PAUSE_COOLDOWN  = 30       # Wait 30s after user interaction before resuming
 MAX_TASK_DURATION    = 10 * 60  # Kill a task after 10 minutes
-BACKGROUND_MODEL     = "llama3.2:3b"  # Lighter model for background, save RAM for user
+BACKGROUND_MODEL     = "llama3.2:1b"  # Use 1b for background — leaves 3b free for chat
 CURIOSITY_INTERVAL   = 10  # Ask a curiosity question every N heartbeat cycles
 BACKGROUND_MODEL_FALLBACK = "llama3.1:8b"
 

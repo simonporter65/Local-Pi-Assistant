@@ -91,6 +91,21 @@ async def lifespan(app: FastAPI):
     )
     asyncio.create_task(heartbeat.run(), name="heartbeat")
 
+    # Keep chat model warm — ping every 4 minutes to prevent eviction
+    async def _keepalive():
+        import ollama
+        while True:
+            await asyncio.sleep(240)
+            try:
+                await asyncio.to_thread(
+                    ollama.generate, model="llama3.2:3b",
+                    prompt="hi", options={"num_predict": 1, "num_ctx": 64}
+                )
+                print("[KEEPALIVE] llama3.2:3b warmed", flush=True)
+            except Exception:
+                pass
+    asyncio.create_task(_keepalive(), name="keepalive")
+
     # Pre-warm embedding model so it's ready for memory search
     async def _prewarm():
         try:
@@ -267,7 +282,10 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     # Fast heuristic first — only call 0.5b if ambiguous
     intent = fast_classify(user_message)
     if intent is None:
+        print(f"[CLASSIFY] Falling back to 0.5b for: {user_message[:50]}", flush=True)
         intent = await asyncio.to_thread(run_pre_pipeline, user_message)
+    else:
+        print(f"[CLASSIFY] Fast: {intent['category']} for: {user_message[:50]}", flush=True)
     category = intent.get("category", "general_chat")
 
     await asyncio.sleep(0)
@@ -307,8 +325,10 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     final = "Something went wrong — please try again."
     result = None
 
+    use_skills = category in {"web_search", "research", "coding", "debugging", "planning",
+                              "agentic_task", "data_analysis", "file_management", "shell_command"}
     try:
-        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id)):
+        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id), use_skills=use_skills):
             if event_type == "token":
                 yield sse("token", text=data)
             elif event_type == "think":
@@ -319,13 +339,12 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                 result = data
                 final = data.get("output", final)
                 break
+    except asyncio.TimeoutError:
+        print(f"[CHAT TIMEOUT] Model took too long", flush=True)
+        final = "Sorry, that took too long. Please try again."
     except Exception as e:
         print(f"[CHAT ERROR] {type(e).__name__}: {e}", flush=True)
-        try:
-            result, skill_events, think_events = await _run_model(rewritten, model, system, budget)
-            final = result.get("output", final)
-        except Exception as e2:
-            print(f"[CHAT ERROR fallback] {e2}", flush=True)
+        final = "Something went wrong — please try again." 
 
     # Track assistant response in history
     if final and final != "Something went wrong — please try again.":
@@ -405,17 +424,22 @@ async def _iter_stream(stream):
         await asyncio.sleep(0)  # yield control back to event loop between chunks
 
 
-async def _run_model_streaming(prompt, model, system, budget, history=None):
+async def _run_model_streaming(prompt, model, system, budget, history=None, use_skills=False):
     """Streams tokens. Yields: ("token", text) | ("skill", ev) | ("think", text) | ("done", dict)"""
     import ollama, re
 
+    # Only add skill/final format instruction for categories that need it
+    if use_skills:
+        user_content = f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"
+    else:
+        user_content = prompt
+
     # Build messages with conversation history
     messages = list(history or [])
-    # Replace last user message with task-formatted version
     if messages and messages[-1]["role"] == "user":
-        messages[-1] = {"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"}
+        messages[-1] = {"role": "user", "content": user_content}
     else:
-        messages.append({"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"})
+        messages.append({"role": "user", "content": user_content})
     skill_events, think_events = [], []
     tool_count = 0
     last_reply = ""
@@ -430,7 +454,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None):
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
             )
             collected = []
             streaming_started = False
@@ -458,7 +482,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None):
         else:
             resp = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
             )
             raw = resp["message"]["content"]
 
@@ -521,7 +545,7 @@ async def _run_model(prompt, model, system, budget, history=None):
     while tool_count < 20:
         resp = await asyncio.to_thread(
             ollama.chat, model=model, messages=msgs_with_system,
-            options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+            options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
         )
         raw = resp["message"]["content"]
         last_reply = raw

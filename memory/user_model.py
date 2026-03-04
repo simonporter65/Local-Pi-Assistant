@@ -164,11 +164,29 @@ class UserModel:
             if m:
                 self._store_fact("name", m.group(1), confidence=0.9, source="heuristic")
 
-        # Location
-        for pattern in [r"i (?:live|am) in ([A-Z][a-zA-Z\s]+)", r"based in ([A-Z][a-zA-Z\s,]+)"]:
-            m = re.search(pattern, text)
+        # Location — handle "I live in X", "remember that I live in X", "based in X"
+        for pattern in [
+            r"i (?:live|am|'m) in ([A-Za-z][a-zA-Z\s,]+?)(?:\.|,\s*[A-Z]{2}|$)",
+            r"based in ([A-Za-z][a-zA-Z\s,]+)",
+            r"from ([A-Za-z][a-zA-Z\s]+),\s*([A-Z]{2})",
+        ]:
+            m = re.search(pattern, text, re.IGNORECASE)
             if m:
-                self._store_fact("location", m.group(1).strip(), confidence=0.8, source="heuristic")
+                loc = m.group(1).strip().rstrip(",")
+                if len(loc) > 2:
+                    self._store_fact("location", loc, confidence=0.85, source="heuristic")
+                    break
+
+        # Family
+        for pattern in [
+            r"i have (\d+|one|two|three|four|five) kids",
+            r"i have (\d+|one|two|three|four|five) children",
+            r"(\d+|one|two|three|four|five) kids",
+        ]:
+            m = re.search(pattern, t)
+            if m:
+                self._store_fact("family", f"{m.group(1)} kids", confidence=0.85, source="heuristic")
+                break
 
         # Occupation
         for pattern in [r"i(?:'m| am) (?:a |an )?([a-z]+ (?:developer|engineer|designer|teacher|doctor|lawyer|student|manager|founder|ceo|cto))", r"i work (?:as a?n? )?([a-z ]+)"]:

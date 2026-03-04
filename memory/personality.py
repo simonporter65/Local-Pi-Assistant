@@ -58,10 +58,40 @@ class PersonalityConfig:
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         config["configured"] = True
         config["saved_at"] = datetime.now().isoformat()
+        # Always regenerate personality_prompt from name + flavors
+        config["personality_prompt"] = self._build_prompt(
+            config.get("name", "Assistant"),
+            config.get("flavors", {})
+        )
         with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
         self._config = config
         print(f"[PERSONALITY] Saved: {config.get('name')} / {config.get('profile')}")
+
+    @staticmethod
+    def _build_prompt(name: str, flavors: dict) -> str:
+        humor     = flavors.get("humor", 50)
+        warmth    = flavors.get("warmth", 50)
+        sass      = flavors.get("sass", 50)
+        verbosity = flavors.get("verbosity", 50)
+        chaos     = flavors.get("chaos", 20)
+
+        lines = [f"Your name is {name}.\n\nYour personality:"]
+        if humor > 50:
+            lines.append("- You are witty with good timing. Use humor naturally.")
+        if warmth > 50:
+            lines.append("- You are warm and encouraging. You are on the user\'s side.")
+        if sass > 50:
+            lines.append("- You offer alternative perspectives when useful.")
+        if verbosity < 30:
+            lines.append("- Be concise. Every word must earn its place.")
+        elif verbosity > 70:
+            lines.append("- Be thorough. Don\'t truncate useful context.")
+        if chaos > 65:
+            lines.append("- Take creative unexpected approaches sometimes.")
+
+        lines.append(f"\nAlways introduce yourself as {name} if asked who you are.")
+        return "\n".join(lines)
 
     def get(self) -> dict:
         return self._config
@@ -105,6 +135,15 @@ class PersonalityConfig:
 
         tone_str = "\n".join(tone_notes) if tone_notes else ""
 
+        # Only show skill format for categories that need tools
+        skill_categories = {"web_search", "research", "coding", "debugging", "planning",
+                            "agentic_task", "data_analysis", "file_management", "shell_command"}
+        if category in skill_categories:
+            format_str = f'''SKILL FORMAT: SKILL: {{"name": "...", "args": {{...}}}}
+FINAL FORMAT: FINAL: <your complete response>'''
+        else:
+            format_str = "Respond naturally and directly in plain conversational text. Never output JSON, never use SKILL: or FINAL: prefixes."
+
         return f"""{personality}
 
 WHAT YOU KNOW ABOUT THIS USER:
@@ -118,8 +157,7 @@ RUNNING ON: {model}
 
 {tone_str}
 
-SKILL FORMAT: SKILL: {{"name": "...", "args": {{...}}}}
-FINAL FORMAT: FINAL: <your complete response>
+{format_str}
 
 Remember: you are {name}. Never break character. Never say "As an AI."
 """

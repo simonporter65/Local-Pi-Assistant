@@ -1,6 +1,6 @@
 """
 core/fast_classifier.py — Sub-millisecond heuristic classifier.
-Falls back to 0.5b only for ambiguous messages.
+Falls back to 0.5b only for truly ambiguous messages.
 """
 import re
 
@@ -8,10 +8,10 @@ CODING_WORDS = {"code", "function", "bug", "error", "python", "javascript", "scr
                 "debug", "class", "import", "syntax", "compile", "programming", "html",
                 "css", "sql", "bash", "terminal", "git", "api", "json", "xml"}
 
-SEARCH_WORDS = {"search", "find", "look up", "google", "what is", "who is", "when did",
-                "where is", "how does", "latest", "news", "current", "today", "price"}
+SEARCH_WORDS = {"search", "look up", "google", "latest", "news", "current", "price",
+                "weather", "stock", "define", "meaning", "translate"}
 
-TASK_WORDS = {"create", "make", "build", "write", "generate", "plan", "schedule",
+TASK_WORDS = {"create", "make", "build", "generate", "plan", "schedule",
               "remind", "task", "todo", "draft", "summarize", "analyse", "analyze"}
 
 MATH_WORDS = {"calculate", "solve", "equation", "math", "formula", "compute", "integral",
@@ -19,9 +19,24 @@ MATH_WORDS = {"calculate", "solve", "equation", "math", "formula", "compute", "i
 
 CREATIVE_WORDS = {"story", "poem", "write me", "creative", "fiction", "imagine", "invent"}
 
+# Phrases that are always conversational — never need 0.5b
+CHAT_PHRASES = [
+    "do you", "can you", "you ", "your ", "remember", "know about", "about me",
+    "my name", "who am", "where do i", "what do i", "i live", "i am", "i'm",
+    "pretty good", "not bad", "doing well", "how are", "still there", "you there",
+    "what city", "what state", "what country", "tell me", "do you know",
+    "what do you", "have you", "are you", "were you", "did you",
+]
+
 def fast_classify(message: str) -> dict:
     msg = message.lower().strip()
     words = set(re.findall(r'\b\w+\b', msg))
+
+    # Conversational phrases — always general chat
+    if any(p in msg for p in CHAT_PHRASES):
+        return {"category": "general_chat", "confidence": 0.95,
+                "needs_tools": False, "rewritten": message,
+                "facts": [], "_source": "heuristic"}
 
     # Very short messages are always general chat
     if len(msg) < 30 and not words & (CODING_WORDS | MATH_WORDS | SEARCH_WORDS):
@@ -54,5 +69,7 @@ def fast_classify(message: str) -> dict:
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
-    # Ambiguous — return None to signal fallback to 0.5b
-    return None
+    # Default to general_chat rather than falling back to 0.5b
+    return {"category": "general_chat", "confidence": 0.7,
+            "needs_tools": False, "rewritten": message,
+            "facts": [], "_source": "heuristic_default"}

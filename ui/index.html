@@ -956,12 +956,7 @@ function handleStreamEvent(event, stageEl) {
       break;
 
     case 'stage_done':
-      if (currentStageEl) {
-        // Convert spinner to checkmark
-        currentStageEl.className = 'bubble status-msg';
-        currentStageEl.innerHTML = `<span class="stage-icon">✓</span><span>${escHtml(event.message)}</span>`;
-      }
-      currentStageEl = null;
+      if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
       break;
 
     case 'skill_call':
@@ -974,6 +969,7 @@ function handleStreamEvent(event, stageEl) {
       break;
 
     case 'final':
+      console.log('[FINAL] streamingBubbleRow=', streamingBubbleRow, 'streamingBubbleEl=', streamingBubbleEl);
       if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
       if (quickAckEl) { removeElement(quickAckEl); quickAckEl = null; }
       hideTyping();
