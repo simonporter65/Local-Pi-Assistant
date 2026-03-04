@@ -2,16 +2,21 @@
 # start.sh — Start the assistant (server + Xvfb)
 # Can be run manually or via systemd
 
-AGENT_HOME="${AGENT_HOME:-/mnt/nvme/agent}"
-VENV="$AGENT_HOME/venv/bin/python"
+AGENT_HOME="${AGENT_HOME:-$(cd "$(dirname "$0")" && pwd)}"
 
-# Start virtual framebuffer if not running (needed for screenshots/browser)
-if ! pgrep -x Xvfb > /dev/null; then
-    Xvfb :99 -screen 0 1920x1080x24 &
-    echo "Started Xvfb"
+# Resolve Python: prefer project venv, then fall back to system python3
+if [ -x "$AGENT_HOME/venv/bin/python" ]; then
+    VENV="$AGENT_HOME/venv/bin/python"
+else
+    VENV="${VENV:-$(which python3)}"
 fi
 
-export DISPLAY=:99
+# Start virtual framebuffer if available and not already running (needed for screenshots/browser)
+if command -v Xvfb > /dev/null && ! pgrep -x Xvfb > /dev/null; then
+    Xvfb :99 -screen 0 1920x1080x24 &
+    echo "Started Xvfb"
+    export DISPLAY=:99
+fi
 export AGENT_HOME=$AGENT_HOME
 export AGENT_WORKSPACE=$AGENT_HOME/workspace
 export AGENT_SCREENSHOTS=$AGENT_HOME/screenshots

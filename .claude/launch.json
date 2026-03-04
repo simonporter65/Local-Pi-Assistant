@@ -2,15 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ARC Pi Assistant (via SSH)",
+      "name": "assistant",
       "runtimeExecutable": "ssh",
-      "runtimeArgs": ["-p", "2222", "simon@192.168.68.159", "sudo systemctl restart arc && journalctl -u arc -f"],
+      "runtimeArgs": ["-p", "2222", "simon@192.168.68.159", "journalctl -fu assistant"],
       "port": 8765
     },
     {
-      "name": "ARC Local Dev (uvicorn)",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8765", "--reload"],
+      "name": "assistant-local",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["start.sh"],
       "port": 8765
     }
   ]
