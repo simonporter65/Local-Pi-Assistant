@@ -87,11 +87,13 @@ Available skills: {skills}
 
 Rules:
 - ONLY use the available skills listed above — do not invent skills that don't exist
-- NEVER suggest ML training, model training, pip install, or any code that runs on the system
+- NEVER suggest: ML/model training, pip/apt/package installs, system upgrades, code execution
+- NEVER suggest: asking the user questions, gathering user information, interacting with the user
+- NEVER suggest: writing new skills, updating system software, modifying system config
 - task_type MUST be one of: research, prepare, reflect, maintain
-- Focus on: researching topics the user cares about, checking system health, preparing useful info
+- Focus on: researching topics the user cares about, summarising useful info, checking web sources
 - 2-3 tasks maximum, use "low" or "idle" priority
-- Keep descriptions short and concrete
+- Keep descriptions short and concrete (one sentence)
 
 Return a JSON array ONLY — no explanation, no markdown, no code blocks:
 [{{"title": "...", "description": "...", "task_type": "research|prepare|reflect|maintain", "priority_name": "low|idle"}}]"""
@@ -235,11 +237,15 @@ class HeartbeatLoop:
 
     # ── Task execution ────────────────────────────────────────────────────
 
-    # Keywords that signal a task requires live user interaction — background agent can't handle these
+    # Keywords that signal a task is impossible or dangerous for the background agent
     _INTERACTION_KEYWORDS = (
+        # User interaction — agent has no chat channel
         "ask user", "ask the user", "gather information from user",
         "gather more information", "interact with user", "user profile update",
         "request user", "prompt user", "wait for user",
+        # System modification — too risky to run autonomously
+        "update system packages", "update packages", "install packages",
+        "apt upgrade", "apt install", "pip install", "system upgrade",
     )
 
     async def _execute_task(self, task: dict):
