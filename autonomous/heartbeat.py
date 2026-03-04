@@ -382,7 +382,10 @@ class HeartbeatLoop:
             new_tasks_match = re.search(r"NEW_TASKS:\s*(\[.*?\])", reply, re.DOTALL)
             if new_tasks_match:
                 try:
-                    new_tasks = json.loads(new_tasks_match.group(1))
+                    decoder = json.JSONDecoder()
+                    parsed, _ = decoder.raw_decode(new_tasks_match.group(1))
+                    if isinstance(parsed, list):
+                        new_tasks = parsed
                     reply = reply[:new_tasks_match.start()].strip()
                 except Exception:
                     pass
@@ -400,7 +403,8 @@ class HeartbeatLoop:
             skill_match = re.search(r"SKILL:\s*(\{.*?\})", reply, re.DOTALL)
             if skill_match:
                 try:
-                    sc = json.loads(skill_match.group(1))
+                    decoder = json.JSONDecoder()
+                    sc, _ = decoder.raw_decode(skill_match.group(1))
                     name = sc.get("name", "")
                     args = sc.get("args", {})
 
@@ -468,7 +472,15 @@ class HeartbeatLoop:
             if not match:
                 return
 
-            new_tasks = json.loads(match.group())
+            # Use raw_decode to safely parse just the first valid JSON structure
+            # (small models often append text after the JSON array)
+            try:
+                decoder = json.JSONDecoder()
+                new_tasks, _ = decoder.raw_decode(match.group())
+            except json.JSONDecodeError:
+                return
+            if not isinstance(new_tasks, list):
+                return
             added = 0
             for nt in new_tasks:
                 if isinstance(nt, dict) and nt.get("title"):
