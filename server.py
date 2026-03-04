@@ -584,7 +584,8 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
         skill_m = re.search(r"SKILL:\s*(\{.*?\})", reply, re.DOTALL)
         if skill_m:
             try:
-                sc = json.loads(skill_m.group(1))
+                _decoder = json.JSONDecoder()
+                sc, _ = _decoder.raw_decode(skill_m.group(1))
                 yield ("skill", sc)
                 res = await asyncio.to_thread(registry.run, sc["name"], **sc.get("args", {}))
                 res_str = str(res)[:6000]
