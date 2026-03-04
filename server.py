@@ -430,14 +430,17 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     if final and final != "Something went wrong — please try again.":
         _add_to_history(session_id, "assistant", final)
 
-    yield sse("stage_done", message="Done")
-    yield sse("final", message=final)
+    try:
+        yield sse("stage_done", message="Done")
+        yield sse("final", message=final)
 
-    # Fire-and-forget — user already has their response, don't block the stream
-    asyncio.create_task(_post_response(
-        user_message, final, intent, result, model, session_id, t0, category
-    ))
-    heartbeat.resume_after_user()
+        # Fire-and-forget — user already has their response, don't block the stream
+        asyncio.create_task(_post_response(
+            user_message, final, intent, result, model, session_id, t0, category
+        ))
+    finally:
+        # Always resume heartbeat — even if client disconnected mid-stream
+        heartbeat.resume_after_user()
 
 
 async def _post_response(user_message, final, intent, result, model, session_id, t0, category):
