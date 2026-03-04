@@ -104,12 +104,14 @@ class HeartbeatLoop:
         memory,
         user_model,
         broadcast_fn: Callable,   # async fn(event_dict) — sends to UI
+        personality=None,
     ):
         self.queue = task_queue
         self.registry = registry
         self.memory = memory
         self.user_model = user_model
         self.broadcast = broadcast_fn
+        self.personality = personality
         self.db_path = task_queue.db_path if hasattr(task_queue, 'db_path') else None
 
         self._paused = False

@@ -66,21 +66,30 @@ def run(skill_name: str, description: str, example_usage: str = "") -> str:
     if os.path.exists(skill_path):
         return f"Skill '{skill_name}' already exists at {skill_path}. Delete it first if you want to rewrite it."
 
-    try:
-        response = ollama.generate(
-            model="qwen2.5-coder:14b",
-            prompt=WRITE_PROMPT.format(
-                name=skill_name,
-                description=description,
-                example=example_usage or "No example provided.",
-            ),
-            options={
-                "temperature": 0.2,
-                "num_predict": 4096,
-                "num_ctx": 4096,
-            }
-        )
+    _models = ["qwen2.5-coder:14b", "qwen2.5-coder:7b", "llama3.1:8b"]
+    prompt_text = WRITE_PROMPT.format(
+        name=skill_name,
+        description=description,
+        example=example_usage or "No example provided.",
+    )
 
+    response = None
+    for _model in _models:
+        try:
+            response = ollama.generate(
+                model=_model,
+                prompt=prompt_text,
+                options={"temperature": 0.2, "num_predict": 4096, "num_ctx": 4096},
+            )
+            break
+        except ollama.ResponseError as e:
+            if "out of memory" in str(e).lower() or "model not found" in str(e).lower():
+                continue
+            raise
+    if response is None:
+        return "ERROR: All models failed (OOM or not installed)"
+
+    try:
         code = response["response"].strip()
 
         # Strip markdown fences if model added them anyway

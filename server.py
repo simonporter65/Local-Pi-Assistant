@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
         memory=memory,
         user_model=user_model,
         broadcast_fn=broadcast,
+        personality=personality,
     )
     asyncio.create_task(heartbeat.run(), name="heartbeat")
 
