@@ -302,15 +302,10 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     category = intent.get("category", "general_chat")
     print(f"[CLASSIFY] {intent['_source']}: {category} for: {user_message[:50]}", flush=True)
 
-    # Parallel pre-flight: fetch user context + score previous exchange simultaneously
-    user_ctx, _ = await asyncio.gather(
-        asyncio.to_thread(user_model.get_context_for_prompt),
-        asyncio.to_thread(training.score_previous_exchange, user_message, session_id),
-    )
-
-    # Fast heuristic extraction (~0ms) — may update facts immediately
-    await asyncio.to_thread(user_model.extract_from_message, user_message)
-    # Notify UI immediately if any facts were extracted
+    # Get user context inline (fast — 30s cached DB read), fire everything else as background
+    user_ctx = user_model.get_context_for_prompt()
+    asyncio.create_task(asyncio.to_thread(training.score_previous_exchange, user_message, session_id))
+    asyncio.create_task(asyncio.to_thread(user_model.extract_from_message, user_message))
     asyncio.create_task(broadcast({"type": "profile_updated"}))
 
     route     = route_to_model(intent)
