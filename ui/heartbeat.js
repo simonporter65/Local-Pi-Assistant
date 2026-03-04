@@ -92,6 +92,21 @@ function handleHeartbeatEvent(event) {
     case 'heartbeat_skill_call':
       updateActivityBar(event.message, 'skill', 'active');
       break;
+
+    case 'heartbeat_curiosity':
+      // Curiosity question — show as an agent message in chat
+      if (event.message) appendMessage('agent', event.message.replace(/^💬\s*/, ''), 'proactive');
+      break;
+
+    case 'lora_opt_in':
+      // LoRA training opt-in — show as an important agent message
+      if (event.message) appendMessage('agent', event.message, 'proactive');
+      break;
+
+    case 'heartbeat_training':
+      // Training data curated — show subtle activity bar note
+      updateActivityBar('Training data curated', 'maintain', 'done');
+      break;
   }
 }
 
@@ -263,15 +278,17 @@ function createTaskPanel() {
 
 async function loadAndRenderTasks(panel) {
   try {
-    const r = await fetch('/tasks?status=pending');
-    const data = await r.json();
-    const pending = data.tasks || [];
-    
-    const rDone = await fetch('/tasks?status=done');
+    const [rAll, rDone] = await Promise.all([
+      fetch('/tasks'),
+      fetch('/tasks?status=done'),
+    ]);
+    const dataAll = await rAll.json();
     const dataDone = await rDone.json();
+    const allTasks = dataAll.tasks || [];
+    const pending = allTasks.filter(t => t.status === 'pending');
+    const running = allTasks.filter(t => t.status === 'running');
     const done = (dataDone.tasks || []).slice(0, 10);
-    
-    const summary = data.summary || {};
+    const summary = dataAll.summary || {};
     
     panel.innerHTML = `
       <div style="padding:20px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;justify-content:space-between;align-items:center;">
@@ -294,11 +311,16 @@ async function loadAndRenderTasks(panel) {
       </div>
 
       <div style="flex:1;overflow-y:auto;padding:0 16px 16px;">
+        ${running.length ? `
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#f59e0b;
+               padding:8px 0 6px;font-weight:500;">⚡ Running (${running.length})</div>
+          ${running.map(renderTaskCard).join('')}
+        ` : ''}
         ${pending.length ? `
           <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#4b5563;
                padding:8px 0 6px;font-weight:500;">Pending (${pending.length})</div>
           ${pending.map(renderTaskCard).join('')}
-        ` : '<div style="padding:20px;color:#4b5563;font-size:13px;text-align:center;">No pending tasks</div>'}
+        ` : (!running.length ? '<div style="padding:20px;color:#4b5563;font-size:13px;text-align:center;">No pending tasks</div>' : '')}
         
         ${done.length ? `
           <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#4b5563;
