@@ -3,12 +3,41 @@ core/router.py
 Routes tasks to the best available model.
 Uses MODEL_MAP for explicit category→model mapping.
 Falls back gracefully if preferred model not installed.
+
+If scripts/lora_train.py has been run and created arc-personal, that model is
+used for general_chat and conversational categories automatically.
 """
+import json
+import os
 import subprocess
 import time
+from pathlib import Path
 
 # Cache installed models — refresh every 5 minutes
 _model_cache = {"models": [], "updated": 0.0}
+
+# Cache the personal model check — refresh every 10 minutes
+_personal_model_cache = {"model": None, "updated": 0.0}
+
+def _get_personal_model() -> str | None:
+    """Return arc-personal model name if it has been built, else None."""
+    now = time.time()
+    if now - _personal_model_cache["updated"] < 600:
+        return _personal_model_cache["model"]
+    _personal_model_cache["updated"] = now
+    marker = Path(__file__).parent.parent / "memory" / "personal_model.json"
+    try:
+        if marker.exists():
+            info = json.loads(marker.read_text())
+            model = info.get("model")
+            installed = get_installed_models()
+            if model and model in installed:
+                _personal_model_cache["model"] = model
+                return model
+    except Exception:
+        pass
+    _personal_model_cache["model"] = None
+    return None
 
 def get_installed_models() -> list:
     if time.time() - _model_cache["updated"] > 300:
@@ -73,6 +102,13 @@ DEFAULT = {"model": "llama3.2:3b", "latency": "fast"}
 def route_to_model(intent: dict) -> dict:
     category = intent.get("category", "general_chat")
     route = MODEL_MAP.get(category, DEFAULT).copy()
+
+    # If arc-personal is built, use it for conversational categories
+    if category in {"general_chat", "summarization", "translation",
+                    "task_management", "creative_writing", "planning"}:
+        personal = _get_personal_model()
+        if personal:
+            route["model"] = personal
 
     # Check if preferred model is installed, fall back if not
     installed = get_installed_models()

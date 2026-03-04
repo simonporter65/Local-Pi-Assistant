@@ -526,13 +526,10 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
 
         if first_call:
             first_call = False
-            # qwen3 models default to thinking mode — disable for fast chat
-            extra = {"think": False} if model.startswith("qwen3") else {}
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
                 options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
-                **extra
             )
             collected = []
             # For tool-using categories, buffer the start to detect SKILL:/FINAL: prefixes.
@@ -673,18 +670,19 @@ async def lora_opt_in(action: str = "yes"):
                 "INSERT OR REPLACE INTO training_meta (key, value) VALUES ('lora_opted_in', '1')"
             )
             db.commit()
-            # Queue a training task
+            # Queue personalisation task — runs scripts/lora_train.py via bash_exec
+            script_path = str(Path(__file__).parent / "scripts" / "lora_train.py")
             task_queue.add(
-                title="LoRA fine-tuning: prepare adapter",
+                title="Build personalised model (arc-personal)",
                 description=(
-                    "The user has opted in to on-device LoRA fine-tuning. "
-                    "Prepare the training run: verify training data at /mnt/nvme/lora/training_data.jsonl, "
-                    "check available tools, and summarise what is needed."
+                    f"The user has opted in to on-device personalisation. "
+                    f"Run: SKILL: {{\"name\": \"bash_exec\", \"args\": {{\"command\": \"python3 {script_path} --db {DB_PATH}\", \"timeout\": 300}}}} "
+                    f"Then report the result. If successful, tell the user to restart the service."
                 ),
                 task_type="prepare",
                 priority_name="low",
             )
-            return {"ok": True, "message": "LoRA training scheduled."}
+            return {"ok": True, "message": "Personalisation scheduled. Will run overnight."}
         else:
             # Snooze for 30 days
             ask_after = str(date.today() + timedelta(days=30))
@@ -696,6 +694,19 @@ async def lora_opt_in(action: str = "yes"):
             return {"ok": True, "message": "Snoozed for 30 days."}
     finally:
         db.close()
+
+
+@app.get("/lora/status")
+async def lora_status():
+    """Return personalisation status: whether arc-personal has been built."""
+    marker = Path(AGENT_HOME) / "memory" / "personal_model.json"
+    if marker.exists():
+        try:
+            info = json.loads(marker.read_text())
+            return {"personalised": True, **info}
+        except Exception:
+            pass
+    return {"personalised": False}
 
 
 @app.get("/proactive")
