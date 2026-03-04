@@ -38,7 +38,7 @@ MODEL_MAP = {
     "research":               {"model": "llama3.1:8b",         "latency": "normal"},
     "planning":               {"model": "llama3.1:8b",         "latency": "normal"},
     "creative_writing":       {"model": "llama3.1:8b",         "latency": "normal"},
-    "image_description":      {"model": "qwen3.5:0.8b",        "latency": "fast"},
+    "image_description":      {"model": "llama3.2-vision:11b", "latency": "slow"},
 
     # Slow: specialist models
     "coding":                 {"model": "qwen2.5-coder:7b",    "latency": "slow"},
@@ -52,16 +52,17 @@ MODEL_MAP = {
     "reasoning":              {"model": "deepseek-r1:7b",      "latency": "slow"},
     "error_recovery":         {"model": "deepseek-r1:7b",      "latency": "slow"},
     "agentic_task":           {"model": "llama3.1:8b",         "latency": "slow"},
-    "screenshot_analysis":    {"model": "qwen3.5:0.8b",        "latency": "fast"},
+    "screenshot_analysis":    {"model": "llama3.2-vision:11b", "latency": "slow"},
 }
 
 # Fallback chains: if primary not installed or fails, try these in order
 FALLBACK_CHAINS = {
-    "qwen3.5:0.8b":          ["qwen3.5:2b",     "qwen3:1.7b",   "llama3.2:3b"],
-    "qwen2.5-coder:7b":    ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
-    "deepseek-r1:7b":      ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
-    "llama3.1:8b":         ["mistral:7b",     "llama3.2:3b"],
-    "llava:7b":            ["llama3.2:3b"],
+    "qwen3.5:0.8b":            ["qwen3.5:2b",      "qwen3:1.7b",   "llama3.2:3b"],
+    "qwen2.5-coder:7b":        ["llama3.1:8b",     "mistral:7b",   "llama3.2:3b"],
+    "deepseek-r1:7b":          ["llama3.1:8b",     "mistral:7b",   "llama3.2:3b"],
+    "llama3.1:8b":             ["mistral:7b",      "llama3.2:3b"],
+    "llama3.2-vision:11b":     ["llava:13b",       "llava:7b",     "qwen3.5:0.8b"],
+    "llava:7b":                ["llama3.2:3b"],
 }
 
 DEFAULT = {"model": "llama3.2:3b", "latency": "fast"}

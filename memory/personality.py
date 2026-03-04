@@ -118,6 +118,7 @@ class PersonalityConfig:
         category: str,
         user_context: str,
         past_context: str,
+        skills_list: str = "",
     ) -> str:
         name = self.name or "Assistant"
         personality = self.personality_prompt
@@ -137,10 +138,13 @@ class PersonalityConfig:
 
         # Only show skill format for categories that need tools
         skill_categories = {"web_search", "research", "coding", "debugging", "planning",
-                            "agentic_task", "data_analysis", "file_management", "shell_command"}
+                            "agentic_task", "data_analysis", "file_management", "shell_command",
+                            "screenshot_analysis", "image_description"}
         if category in skill_categories:
-            format_str = f'''SKILL FORMAT: SKILL: {{"name": "...", "args": {{...}}}}
-FINAL FORMAT: FINAL: <your complete response>'''
+            skills_section = f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""
+            format_str = f'''{skills_section}SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
+FINAL FORMAT: FINAL: <your complete response>
+Use SKILL to call a tool, then wait for result. Use FINAL when done.'''
         else:
             format_str = "Respond naturally and directly in plain conversational text. Never output JSON, never use SKILL: or FINAL: prefixes."
 
@@ -162,8 +166,9 @@ RUNNING ON: {model}
 Remember: you are {name}. Never break character. Never say "As an AI."
 """
 
-    def get_background_system_prompt(self, user_context: str) -> str:
+    def get_background_system_prompt(self, user_context: str, skills_list: str = "") -> str:
         name = self.name or "Assistant"
+        skills_section = f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""
         return f"""{self.personality_prompt}
 
 You are running a background task. The user is not watching.
@@ -171,8 +176,8 @@ Do real work. Use skills. Be thorough.
 
 USER CONTEXT:
 {user_context}
-
-SKILL FORMAT: SKILL: {{"name": "...", "args": {{...}}}}
+{skills_section}
+SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
 FINAL FORMAT: FINAL: <summary of what you did>
 NEW_TASKS: [{{"title":"...","description":"...","task_type":"...","priority_name":"..."}}]
 """

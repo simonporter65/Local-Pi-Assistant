@@ -29,14 +29,13 @@ def run(image_path: str, question: str = "Describe what you see in detail.") -> 
             image_b64 = base64.b64encode(f.read()).decode()
 
         resp = ollama.chat(
-            model="qwen3.5:0.8b",
+            model="llama3.2-vision:11b",
             messages=[{
                 "role": "user",
                 "content": question,
                 "images": [image_b64],
             }],
             options={"temperature": 0.3, "num_predict": 800, "num_ctx": 4096},
-            think=False,
         )
         return resp["message"]["content"].strip()
 

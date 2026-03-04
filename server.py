@@ -324,7 +324,11 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     else:
         past_ctx = "None yet." 
 
-    system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx)
+    skills_list = registry.list_skills() if category in {
+        "research", "coding", "debugging", "agentic_task", "data_analysis",
+        "file_management", "shell_command", "screenshot_analysis", "image_description"
+    } else ""
+    system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx, skills_list)
 
     # For web_search: pre-execute the search and inject results directly.
     # More reliable than hoping the model emits the SKILL: format.
