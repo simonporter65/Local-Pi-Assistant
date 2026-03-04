@@ -97,11 +97,11 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(180)
             try:
                 await asyncio.to_thread(
-                    ollama.generate, model="qwen3:1.7b",
+                    ollama.generate, model="qwen3.5:0.8b",
                     prompt="hi", options={"num_predict": 1, "num_ctx": 64},
                     think=False,
                 )
-                print("[KEEPALIVE] qwen3:1.7b warmed", flush=True)
+                print("[KEEPALIVE] qwen3.5:0.8b warmed", flush=True)
             except Exception:
                 pass
             try:
@@ -119,13 +119,13 @@ async def lifespan(app: FastAPI):
     import ollama as _ollama
     try:
         await asyncio.to_thread(
-            _ollama.generate, model="qwen3:1.7b",
+            _ollama.generate, model="qwen3.5:0.8b",
             prompt="hi", options={"num_predict": 1, "num_ctx": 64},
             think=False,
         )
-        print("[SERVER] Warmed qwen3:1.7b", flush=True)
+        print("[SERVER] Warmed qwen3.5:0.8b", flush=True)
     except Exception as _e:
-        print(f"[SERVER] Could not warm qwen3:1.7b: {_e}", flush=True)
+        print(f"[SERVER] Could not warm qwen3.5:0.8b: {_e}", flush=True)
     # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI):
             if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
                 resp = await asyncio.to_thread(
                     _ollama.generate,
-                    model="qwen3:1.7b",
+                    model="qwen3.5:0.8b",
                     prompt=(
                         f"You are {name}. You know this about your user:\n{ctx}\n\n"
                         f"Write a warm 1-sentence greeting acknowledging what you remember. "
@@ -465,7 +465,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
         if first_call:
             first_call = False
             # qwen3 models default to thinking mode — disable for fast chat
-            extra = {"think": False} if model.startswith("qwen3:") else {}
+            extra = {"think": False} if model.startswith("qwen3") else {}
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
