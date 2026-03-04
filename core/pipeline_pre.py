@@ -76,11 +76,7 @@ def run_pre_pipeline(user_message: str) -> dict:
                 fact_cats="|".join(FACT_CATEGORIES),
                 input=user_message[:400],
             ),
-            options={
-                "temperature": 0.1,
-                "num_predict": 200,
-                "num_ctx":     1200,
-            }
+            options={"temperature": 0.1, "num_predict": 150, "num_ctx": 1024}
         )
         text = resp["response"].strip()
 

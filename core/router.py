@@ -1,61 +1,92 @@
 """
-core/router.py — Dynamic routing based on installed models
+core/router.py
+Routes tasks to the best available model.
+Uses MODEL_MAP for explicit category→model mapping.
+Falls back gracefully if preferred model not installed.
 """
 import subprocess
-import json
+import time
+
+# Cache installed models — refresh every 5 minutes
+_model_cache = {"models": [], "updated": 0.0}
 
 def get_installed_models() -> list:
-    try:
-        result = subprocess.run(['ollama', 'list'], capture_output=True, text=True)
-        lines = result.stdout.strip().split('\n')[1:]  # skip header
-        return [line.split()[0] for line in lines if line.strip()]
-    except:
-        return []
+    if time.time() - _model_cache["updated"] > 300:
+        try:
+            result = subprocess.run(['ollama', 'list'], capture_output=True, text=True)
+            lines = result.stdout.strip().split('\n')[1:]
+            _model_cache["models"] = [line.split()[0] for line in lines if line.strip()]
+            _model_cache["updated"] = time.time()
+        except Exception:
+            pass
+    return _model_cache["models"]
 
-# Priority order — first installed model in each tier wins
-TIER_PREFERENCES = {
-    "fast":   ["llama3.2:3b", "llama3.2:1b", "qwen2.5:3b", "qwen2.5:0.5b"],
-    "normal": ["llama3.1:8b", "mistral:7b", "qwen2.5:7b", "llama3.2:3b"],
-    "coding": ["qwen2.5-coder:7b", "llama3.1:8b", "mistral:7b", "llama3.2:3b"],
-    "slow":   ["qwen2.5:14b", "phi4:14b", "deepseek-r1:14b", "llama3.1:8b", "llama3.2:3b"],
+# Category → preferred model + latency
+MODEL_MAP = {
+    # Instant: classifier pipeline
+    "intent_classification":  {"model": "qwen2.5:0.5b",        "latency": "instant"},
+    "sentiment_analysis":     {"model": "qwen2.5:0.5b",        "latency": "instant"},
+
+    # Fast: simple chat
+    "general_chat":           {"model": "llama3.2:3b",         "latency": "fast"},
+    "summarization":          {"model": "llama3.2:3b",         "latency": "fast"},
+    "task_management":        {"model": "llama3.2:3b",         "latency": "fast"},
+    "translation":            {"model": "llama3.2:3b",         "latency": "fast"},
+
+    # Normal: capable 8B
+    "web_search":             {"model": "llama3.1:8b",         "latency": "normal"},
+    "research":               {"model": "llama3.1:8b",         "latency": "normal"},
+    "planning":               {"model": "llama3.1:8b",         "latency": "normal"},
+    "creative_writing":       {"model": "llama3.1:8b",         "latency": "normal"},
+    "image_description":      {"model": "llava:7b",            "latency": "normal"},
+
+    # Slow: specialist models
+    "coding":                 {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "debugging":              {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "shell_command":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "skill_writing":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "structured_output":      {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "file_management":        {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "data_analysis":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
+    "math":                   {"model": "deepseek-r1:7b",      "latency": "slow"},
+    "reasoning":              {"model": "deepseek-r1:7b",      "latency": "slow"},
+    "error_recovery":         {"model": "deepseek-r1:7b",      "latency": "slow"},
+    "agentic_task":           {"model": "llama3.1:8b",         "latency": "slow"},
+    "screenshot_analysis":    {"model": "llava:7b",            "latency": "slow"},
 }
 
-CATEGORY_TIER = {
-    "general_chat":       "normal",
-    "summarization":      "fast",
-    "translation":        "fast",
-    "sentiment_analysis": "fast",
-    "web_search":         "normal",
-    "research":           "normal",
-    "planning":           "normal",
-    "data_analysis":      "normal",
-    "file_management":    "normal",
-    "task_management":    "normal",
-    "creative_writing":   "normal",
-    "coding":             "coding",
-    "debugging":          "coding",
-    "shell_command":      "coding",
-    "math":               "coding",
-    "skill_writing":      "slow",
-    "agentic_task":       "slow",
-    "reasoning":          "slow",
+# Fallback chains: if primary not installed or fails, try these in order
+FALLBACK_CHAINS = {
+    "qwen2.5-coder:7b":    ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
+    "deepseek-r1:7b":      ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
+    "llama3.1:8b":         ["mistral:7b",     "llama3.2:3b"],
+    "llava:7b":            ["llama3.2:3b"],
+    "qwen2.5:0.5b":        ["llama3.2:1b",    "llama3.2:3b"],
 }
+
+DEFAULT = {"model": "llama3.2:3b", "latency": "fast"}
+
 
 def route_to_model(intent: dict) -> dict:
     category = intent.get("category", "general_chat")
-    tier = CATEGORY_TIER.get(category, "fast")
+    route = MODEL_MAP.get(category, DEFAULT).copy()
+
+    # Check if preferred model is installed, fall back if not
     installed = get_installed_models()
+    if installed and route["model"] not in installed:
+        for fallback in FALLBACK_CHAINS.get(route["model"], []):
+            if fallback in installed:
+                route["model"] = fallback
+                break
+        else:
+            # Last resort — first installed model
+            if installed:
+                route["model"] = installed[0]
 
-    for model in TIER_PREFERENCES.get(tier, TIER_PREFERENCES["fast"]):
-        if model in installed:
-            return {"model": model, "tier": tier, "latency": tier}
+    return route
 
-    # Last resort — whatever is installed
-    if installed:
-        return {"model": installed[0], "tier": "fast", "latency": "fast"}
-
-    return {"model": "llama3.2:3b", "tier": "fast", "latency": "fast"}
 
 def get_fallback(model: str) -> list:
     installed = get_installed_models()
-    return [m for m in installed if m != model]
+    chain = FALLBACK_CHAINS.get(model, ["llama3.1:8b", "llama3.2:3b"])
+    return [m for m in chain if m in installed] or [m for m in chain]

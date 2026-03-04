@@ -32,16 +32,22 @@ FACT_CATEGORIES = {
     "technology":   "💻",
 }
 
-EXTRACT_PROMPT = """Extract factual information about the user from this message exchange.
-Only extract clear, explicit facts — don't infer or guess.
+EXTRACT_PROMPT = """Extract facts the USER explicitly stated about themselves.
 
 User message: {user_msg}
 Assistant response: {assistant_msg}
 
-Return a JSON array of facts. Each fact: {{"category": "...", "fact": "...", "confidence": 0.0-1.0}}
+Rules:
+- ONLY extract facts from the USER message, never from the assistant response
+- ONLY include facts explicitly stated, never inferred or guessed
+- ONLY include first-person statements ("I am", "I live", "my name", "I work")
+- NEVER extract questions, search queries, or topic discussions as facts
+- NEVER store assistant's words as user facts
+- Return [] if no clear first-person facts found
+
+Each fact: {{"category": "...", "fact": "...", "confidence": 0.0-1.0}}
 Categories: name, location, occupation, interests, family, health, schedule, preferences, goals, projects, skills, finances, mood, communication, technology
 
-Return [] if no clear facts found.
 Return ONLY the JSON array, nothing else."""
 
 PERSONALISE_PROMPT = """You know the following about this user:
@@ -104,7 +110,20 @@ class UserModel:
 
     def extract_from_message(self, user_message: str):
         """Quick extraction from just the user's message (called early in pipeline)."""
-        # Fast heuristic extraction — no LLM needed for obvious facts
+        msg = user_message.lower().strip()
+        # Skip questions and non-personal statements entirely
+        is_question = msg.endswith("?") or msg.startswith((
+            "what ", "who ", "where ", "when ", "how ", "why ",
+            "can ", "could ", "would ", "is ", "are ", "do ", "does "
+        ))
+        first_person_phrases = [
+            "i ", "i'm ", "i am ", "my ", "i've ", "i have ",
+            "i live", "i work", "i like", "i love", "i hate",
+            "i use", "i prefer", "i'm from", "i was", "i studied"
+        ]
+        has_first_person = any(p in msg for p in first_person_phrases)
+        if is_question or not has_first_person:
+            return
         self._heuristic_extract(user_message)
 
     def extract_from_exchange(self, user_message: str, assistant_response: str):

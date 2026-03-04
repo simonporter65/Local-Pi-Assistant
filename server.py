@@ -25,10 +25,8 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.classifier import classify_intent
 from core.pipeline_pre import run_pre_pipeline
 from core.fast_classifier import fast_classify
-from core.rewriter import rewrite_prompt
 from core.router import route_to_model, get_fallback
 from core.token_budget import get_token_budget
 from memory.store import AgentMemory
@@ -38,6 +36,7 @@ from proactive.engine import ProactiveEngine
 from skills.registry import SkillRegistry
 from autonomous.task_queue import TaskQueue
 from autonomous.heartbeat import HeartbeatLoop
+from memory.training_collector import TrainingCollector
 
 AGENT_HOME = os.environ.get("AGENT_HOME", str(Path(__file__).parent))
 DB_PATH    = os.environ.get("AGENT_DB",   f"{AGENT_HOME}/memory/agent.db")
@@ -63,11 +62,12 @@ personality: PersonalityConfig = None
 proactive:   ProactiveEngine   = None
 task_queue:  TaskQueue         = None
 heartbeat:   HeartbeatLoop     = None
+training:    TrainingCollector = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, memory, user_model, personality, proactive, task_queue, heartbeat
+    global registry, memory, user_model, personality, proactive, task_queue, heartbeat, training, training
 
     os.makedirs(f"{AGENT_HOME}/memory",      exist_ok=True)
     os.makedirs(f"{AGENT_HOME}/workspace",   exist_ok=True)
@@ -80,6 +80,8 @@ async def lifespan(app: FastAPI):
     proactive   = ProactiveEngine(user_model, memory, registry)
     task_queue  = TaskQueue(DB_PATH)
 
+    training = TrainingCollector(DB_PATH)
+
     heartbeat = HeartbeatLoop(
         task_queue=task_queue,
         registry=registry,
@@ -89,7 +91,45 @@ async def lifespan(app: FastAPI):
     )
     asyncio.create_task(heartbeat.run(), name="heartbeat")
 
+    # Pre-warm embedding model so it's ready for memory search
+    async def _prewarm():
+        try:
+            import ollama
+            await asyncio.to_thread(
+                ollama.generate, model="nomic-embed-text",
+                prompt="warmup", options={"num_predict": 1}
+            )
+            print("[SERVER] Embed model warmed")
+        except Exception:
+            pass
+    asyncio.create_task(_prewarm())
+
     name = personality.name or "Assistant"
+
+    # Generate startup greeting that acknowledges what ARC already knows
+    async def _startup_greeting():
+        try:
+            import ollama
+            ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
+            if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
+                resp = await asyncio.to_thread(
+                    ollama.generate,
+                    model="llama3.2:3b",
+                    prompt=(
+                        f"You are {name}. You know this about your user:\n{ctx}\n\n"
+                        f"Write a warm 1-sentence greeting acknowledging what you remember. "
+                        f"Be natural, not robotic. Max 20 words."
+                    ),
+                    options={"temperature": 0.7, "num_predict": 40, "num_ctx": 512}
+                )
+                greeting = resp["response"].strip()
+                if greeting:
+                    await broadcast({"type": "greeting", "message": greeting})
+        except Exception as e:
+            print(f"[GREETING] {e}")
+
+    asyncio.create_task(_startup_greeting())
+
     print(f"[SERVER] Ready → http://localhost:8765")
     print(f"[SERVER] Assistant: {name} | Configured: {personality.is_configured}")
     print(f"[SERVER] Skills: {len(registry.skills)} | Tasks: {task_queue.summary()}")
@@ -179,14 +219,18 @@ async def event_stream(request: Request):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# ── Conversation history (last 6 exchanges) ─────────────────────────────────
-_conversation_history: list = []
+# ── Conversation history (keyed by session) ─────────────────────────────────
+_session_histories: dict = {}
 MAX_HISTORY = 6
 
-def _add_to_history(role: str, content: str):
-    _conversation_history.append({"role": role, "content": content})
-    if len(_conversation_history) > MAX_HISTORY * 2:
-        del _conversation_history[:-MAX_HISTORY * 2]
+def _get_history(session_id: str) -> list:
+    return _session_histories.setdefault(session_id, [])
+
+def _add_to_history(session_id: str, role: str, msg: str):
+    h = _get_history(session_id)
+    h.append({"role": role, "content": msg})
+    if len(h) > MAX_HISTORY * 2:
+        del h[:-MAX_HISTORY * 2]
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
@@ -196,25 +240,29 @@ async def chat(request: Request):
     msg = body.get("message", "").strip()
     if not msg:
         return {"error": "empty"}
+    session_id = request.headers.get("X-Session-ID", "default")
     heartbeat.pause_for_user()
     return StreamingResponse(
-        _chat_stream(msg),
+        _chat_stream(msg, session_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
+async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncGenerator[str, None]:
     def sse(t, **kw):
+        print(f"[SSE] {t}: {kw}", flush=True)
         return _sse({"type": t, **kw})
 
     t0 = time.time()
     name = personality.name or "Assistant"
 
-    yield sse("stage", message="Reading your message...")
     await asyncio.sleep(0)
+    # Score previous exchange based on this new message (implicit feedback)
+    await asyncio.to_thread(training.score_previous_exchange, user_message, session_id)
+
     # Track conversation
-    _add_to_history("user", user_message)
+    _add_to_history(session_id, "user", user_message)
 
     # Fast heuristic first — only call 0.5b if ambiguous
     intent = fast_classify(user_message)
@@ -222,7 +270,6 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
         intent = await asyncio.to_thread(run_pre_pipeline, user_message)
     category = intent.get("category", "general_chat")
 
-    yield sse("stage", message="Remembering what I know about you...")
     await asyncio.sleep(0)
 
     user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
@@ -233,8 +280,8 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
     latency = route.get("latency", "fast")
     budget  = get_token_budget(latency, category)
 
-    # Fire quick ack in background while we prep
-    ack_task = asyncio.create_task(_quick_ack(user_message, name))
+    # quick_ack disabled — 0.5b too unreliable for short prompts
+    ack_task = None
 
     rewritten = user_message
     # Only search memory if message references past context
@@ -252,10 +299,7 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
 
     system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx)
 
-    # Send quick ack once ready
-    ack = await ack_task
-    if ack:
-        yield sse("quick_ack", message=ack)
+    # quick_ack disabled
 
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
@@ -264,7 +308,7 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
     result = None
 
     try:
-        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _conversation_history):
+        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id)):
             if event_type == "token":
                 yield sse("token", text=data)
             elif event_type == "think":
@@ -285,7 +329,7 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
 
     # Track assistant response in history
     if final and final != "Something went wrong — please try again.":
-        _add_to_history("assistant", final)
+        _add_to_history(session_id, "assistant", final)
 
     yield sse("stage_done", message="Done")
     yield sse("final", message=final)
@@ -298,26 +342,36 @@ async def _chat_stream(user_message: str) -> AsyncGenerator[str, None]:
         (result or {}).get("success", False),
         (result or {}).get("tool_calls", 0), dur,
     )
-    await asyncio.to_thread(user_model.extract_from_exchange, user_message, final)
+    # Only extract from exchange if response was successful
+    if final and "went wrong" not in final:
+        await asyncio.to_thread(user_model.extract_from_exchange, user_message, final)
+        # Record for LoRA training data collection
+        sys_prompt = personality.get_full_system_prompt(model, category, "", "")
+        await asyncio.to_thread(
+            training.record_exchange,
+            sys_prompt, user_message, final, session_id, model
+        )
 
     # Proactive
     pro = await asyncio.to_thread(proactive.check_after_message, user_message, final)
     if pro:
         yield sse("proactive", message=pro)
 
-    # Follow-up research task
+    # Follow-up research task — only if queue isn't already full
     if category in ("research", "web_search", "planning", "agentic_task", "coding"):
-        await asyncio.to_thread(
-            task_queue.add,
-            title=f"Follow up: {user_message[:55]}",
-            description=(
-                f"User asked: {user_message}\n"
-                f"Response: {final[:300]}\n\n"
-                f"Dig deeper. Find additional useful info. Prepare a proactive update."
-            ),
-            task_type="research",
-            priority_name="low",
-        )
+        summary = await asyncio.to_thread(task_queue.summary)
+        if summary.get("pending", 0) < 10:  # max 10 queued tasks
+            await asyncio.to_thread(
+                task_queue.add,
+                title=f"Follow up: {user_message[:55]}",
+                description=(
+                    f"User asked: {user_message}\n"
+                    f"Response: {final[:300]}\n\n"
+                    f"Dig deeper. Find additional useful info. Prepare a proactive update."
+                ),
+                task_type="research",
+                priority_name="low",
+            )
 
     heartbeat.resume_after_user()
 
@@ -331,10 +385,8 @@ async def _quick_ack(user_message: str, name: str) -> str:
             ollama.generate,
             model="qwen2.5:0.5b",
             prompt=(
-                f"You are {name}, a helpful assistant. "
-                f"The user said: \"{user_message[:150]}\"\n"
-                f"Write ONE short sentence (max 15 words) acknowledging you heard them "
-                f"and are working on it. Be natural. No FINAL: prefix."
+                f"Reply in one short sentence (max 12 words) acknowledging: {user_message[:100]}\n"
+                f"Be warm and natural. Example: 'On it!' or 'Let me check that for you.'"
             ),
             options={"temperature": 0.7, "num_predict": 30, "num_ctx": 512}
         )
@@ -348,16 +400,9 @@ async def _quick_ack(user_message: str, name: str) -> str:
 
 async def _iter_stream(stream):
     """Wrap synchronous ollama stream iterator for async use."""
-    import concurrent.futures
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        it = iter(stream)
-        while True:
-            try:
-                chunk = await loop.run_in_executor(pool, next, it)
-                yield chunk
-            except StopIteration:
-                break
+    for chunk in stream:
+        yield chunk
+        await asyncio.sleep(0)  # yield control back to event loop between chunks
 
 
 async def _run_model_streaming(prompt, model, system, budget, history=None):
@@ -375,6 +420,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None):
     tool_count = 0
     last_reply = ""
     first_call = True
+    token_buffer = ""
 
     while tool_count < 20:
         msgs_with_system = [{"role": "system", "content": system}] + messages
@@ -387,10 +433,26 @@ async def _run_model_streaming(prompt, model, system, budget, history=None):
                 options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
             )
             collected = []
+            streaming_started = False
             async for chunk in _iter_stream(stream):
                 token = chunk.get("message", {}).get("content", "")
-                if token:
-                    collected.append(token)
+                if not token:
+                    continue
+                collected.append(token)
+                token_buffer += token
+                # Don't stream until we know it's not a FINAL: prefix
+                if not streaming_started:
+                    if "FINAL:" in token_buffer:
+                        # Strip FINAL: and start streaming the rest
+                        token_buffer = token_buffer.split("FINAL:", 1)[1].lstrip()
+                        streaming_started = True
+                        if token_buffer:
+                            yield ("token", token_buffer)
+                    elif len(token_buffer) > 10:
+                        # No FINAL: coming — stream normally
+                        streaming_started = True
+                        yield ("token", token_buffer)
+                else:
                     yield ("token", token)
             raw = "".join(collected)
         else:
@@ -441,25 +503,28 @@ async def _run_model_streaming(prompt, model, system, budget, history=None):
     yield ("done", {"output": last_reply.strip() or "Something went wrong — please try again.",
                     "success": bool(last_reply.strip()), "tool_calls": tool_count, "model": model})
 
-async def _run_model(prompt, model, system, budget):
+async def _run_model(prompt, model, system, budget, history=None):
+    """Non-streaming fallback. Used if streaming fails."""
     import ollama, re
 
-    messages = [{"role": "user",
-                 "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"}]
+    messages = list(history or [])
+    if messages and messages[-1]["role"] == "user":
+        messages[-1] = {"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"}
+    else:
+        messages.append({"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"})
+
+    msgs_with_system = [{"role": "system", "content": system}] + messages
     skill_events, think_events = [], []
     tool_count = 0
     last_reply = ""
 
     while tool_count < 20:
-        msgs_with_system = [{"role": "system", "content": system}] + messages
         resp = await asyncio.to_thread(
             ollama.chat, model=model, messages=msgs_with_system,
-            options={"temperature": 0.7, "num_predict": budget,
-                     "num_ctx": 4096}
+            options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
         )
         raw = resp["message"]["content"]
         last_reply = raw
-        print(f"[DEBUG RAW] {repr(raw[:200])}", flush=True)
 
         think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
         reply = raw

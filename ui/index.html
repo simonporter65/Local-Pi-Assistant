@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Your Assistant</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
@@ -328,10 +328,12 @@
   /* ── Status / stage message ── */
   .bubble.streaming { opacity: 0.95; }
 .stream-cursor {
-  display: inline-block;
+  display: inline;
   animation: blink 0.8s infinite;
   color: #88aaff;
-  margin-left: 2px;
+  margin-left: 1px;
+  vertical-align: baseline;
+  font-size: 0.9em;
 }
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -644,7 +646,7 @@
           autocomplete="off"
           spellcheck="true"
         ></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+        <button class="send-btn" id="sendBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
             <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -659,6 +661,11 @@
 // State
 // ─────────────────────────────────────────────
 const API = `${window.location.protocol}//${window.location.hostname}:8765`;
+const SESSION_ID = localStorage.getItem('arc_session') || (() => {
+  const id = 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem('arc_session', id);
+  return id;
+})();
 let isProcessing = false;
 let lastSender = null;
 let userProfile = {};
@@ -796,7 +803,10 @@ function appendMessage(sender, content, type = 'normal', opts = {}) {
 }
 
 function removeElement(el) {
-  if (el && el.parentElement) el.parentElement.remove();
+  if (!el) return;
+  const row = el.closest('.msg-row');
+  if (row) row.remove();
+  else if (el.parentElement) el.parentElement.remove();
 }
 
 function scrollToBottom() {
@@ -819,7 +829,7 @@ function hideTyping() {
 async function sendMessage() {
   const input = document.getElementById('messageInput');
   const text = input.value.trim();
-  if (!text || isProcessing) return;
+  if (!text) return;
 
   input.value = '';
   input.style.height = 'auto';
@@ -831,7 +841,10 @@ async function sendMessage() {
   quickAckEl = null;
   isProcessing = true;
   currentStageEl = null;
-  document.getElementById('sendBtn').disabled = true;
+  // Safety net — always unlock after 3 minutes max
+  setTimeout(() => {
+    isProcessing = false;
+    }, 180000);
 
   appendMessage('user', text);
 
@@ -842,7 +855,7 @@ async function sendMessage() {
   try {
     const resp = await fetch(`${API}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
       body: JSON.stringify({ message: text })
     });
 
@@ -874,7 +887,6 @@ async function sendMessage() {
   }
 
   isProcessing = false;
-  document.getElementById('sendBtn').disabled = false;
   hideTyping();
   loadProfile();
 }
@@ -890,6 +902,12 @@ let quickAckEl = null;
 
 function handleStreamEvent(event, stageEl) {
   switch (event.type) {
+
+    case 'greeting':
+      if (event.message) {
+        appendMessage('agent', event.message);
+      }
+      break;
 
     case 'quick_ack':
       if (event.message) {
@@ -917,14 +935,24 @@ function handleStreamEvent(event, stageEl) {
         streamingBubbleRow = row;
       }
       streamingText += event.text;
-      streamingBubbleEl.innerHTML = renderMarkdown(streamingText) + '<span class="stream-cursor">▋</span>';
+      const rendered = renderMarkdown(streamingText);
+      // Insert cursor inside last element rather than after it
+      const cursorHtml = '<span class="stream-cursor">▋</span>';
+      const lastClose = rendered.lastIndexOf('</');
+      if (lastClose !== -1) {
+        streamingBubbleEl.innerHTML = rendered.slice(0, lastClose) + cursorHtml + rendered.slice(lastClose);
+      } else {
+        streamingBubbleEl.innerHTML = rendered + cursorHtml;
+      }
       scrollToBottom();
       break;
 
     case 'stage':
       if (currentStageEl) removeElement(currentStageEl);
-      currentStageEl = appendMessage('agent', event.message, 'status');
-      event._el = currentStageEl;
+      if (event.message) {
+        currentStageEl = appendMessage('agent', event.message, 'status');
+        event._el = currentStageEl;
+      }
       break;
 
     case 'stage_done':
@@ -937,7 +965,8 @@ function handleStreamEvent(event, stageEl) {
       break;
 
     case 'skill_call':
-      appendMessage('agent', `${event.skill}(${JSON.stringify(event.args || {})})`, 'skill');
+      // Silently log skill calls — don't show raw JSON to user
+      console.log('[SKILL]', event.skill, event.args);
       break;
 
     case 'thinking':
@@ -962,6 +991,9 @@ function handleStreamEvent(event, stageEl) {
       streamingBubbleEl = null;
       streamingBubbleRow = null;
       streamingText = '';
+      isProcessing = false;
+          document.getElementById('messageInput').focus();
+      console.log('[UI] final received, input unlocked');
       break;
 
     case 'proactive':
@@ -1040,6 +1072,19 @@ function clearChat() {
 document.getElementById('messageInput').addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 140) + 'px';
+});
+
+// Monitor button disabled state
+const _btn = document.getElementById('sendBtn');
+const _origDescriptor = Object.getOwnPropertyDescriptor(HTMLButtonElement.prototype, 'disabled');
+Object.defineProperty(_btn, 'disabled', {
+  get() { return _origDescriptor.get.call(this); },
+  set(v) { console.log('[BTN] disabled =', v, new Error().stack.split('\n')[2]); _origDescriptor.set.call(this, v); }
+});
+
+document.getElementById('sendBtn').addEventListener('click', function(e) {
+  e.preventDefault();
+  sendMessage();
 });
 
 document.getElementById('messageInput').addEventListener('keydown', function(e) {

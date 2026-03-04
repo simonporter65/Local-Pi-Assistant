@@ -1,0 +1,8 @@
+
+═══════════════════════════════════════════════════
+  Pi 5 Personal Assistant — Setup
+  Private • Local • Always yours
+═══════════════════════════════════════════════════
+✓ NVMe at /mnt/nvme
+✓ 8GB swap on NVMe
+E: Package 'chromium-browser' has no installation candidate

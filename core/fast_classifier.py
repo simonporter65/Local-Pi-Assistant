@@ -39,7 +39,7 @@ def fast_classify(message: str) -> dict:
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
-    if words & SEARCH_WORDS or msg.endswith("?"):
+    if words & SEARCH_WORDS:
         return {"category": "web_search", "confidence": 0.8,
                 "needs_tools": True, "rewritten": message,
                 "facts": [], "_source": "heuristic"}

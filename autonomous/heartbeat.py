@@ -24,6 +24,7 @@ from typing import Callable, Optional, Set
 
 from autonomous.task_queue import TaskQueue, _in_hours, _in_minutes
 from autonomous.curiosity import get_curiosity_question
+from autonomous.training_curator import curate_training_data, should_ask_opt_in, snooze_opt_in, get_training_status
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,7 @@ class HeartbeatLoop:
         self.memory = memory
         self.user_model = user_model
         self.broadcast = broadcast_fn
+        self.db_path = task_queue.db_path if hasattr(task_queue, 'db_path') else None
 
         self._paused = False
         self._pause_until: Optional[float] = None
@@ -194,6 +196,27 @@ class HeartbeatLoop:
                             return
                     except Exception as e:
                         pass
+                # Curate training data during idle time
+                try:
+                    result = await asyncio.to_thread(curate_training_data, self.db_path)
+                    if result["curated"] > 0:
+                        await self._notify("training", f"📚 Curated {result['curated']} training examples ({result['total_curated']} total)")
+                except Exception:
+                    pass
+
+                # Check if we should ask user to opt into LoRA training
+                try:
+                    if await asyncio.to_thread(should_ask_opt_in, self.db_path):
+                        opt_in_question = (
+                            f"I've been learning from our conversations — I now have enough examples "
+                            f"to train myself to respond more naturally to you. It would happen overnight "
+                            f"while you sleep, entirely on this device. Want me to try?"
+                        )
+                        await self._notify("lora_opt_in", opt_in_question)
+                        await asyncio.to_thread(snooze_opt_in, self.db_path, 30)
+                except Exception:
+                    pass
+
                 await self._notify("reflecting", "Queue empty — reflecting on what to do next...")
                 await self._run_reflection()
             else:
@@ -320,8 +343,7 @@ class HeartbeatLoop:
                     options={
                         "temperature": 0.6,
                         "num_predict": BACKGROUND_TOKEN_BUDGET,
-                        "num_ctx": 6144,
-                        "num_gpu": 999,
+                        "num_ctx": 2048,
                     }
                 )
             except ollama.ResponseError as e:
