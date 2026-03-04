@@ -1,8 +1,6 @@
 """
 skills/vision.py
-Send an image to qwen3.5:0.8b (multimodal) and get a description or answer.
-
-qwen3.5 is natively multimodal — no separate vision model needed.
+Send an image to llama3.2-vision:11b and get a description or answer.
 Works with screenshots from browser.py or screenshot.py.
 """
 
