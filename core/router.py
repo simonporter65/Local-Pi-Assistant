@@ -22,6 +22,10 @@ import subprocess
 import time
 from pathlib import Path
 
+from core.log import get_logger
+
+logger = get_logger("router")
+
 # Cache installed models — refresh every 5 minutes
 _model_cache = {"models": [], "updated": 0.0}
 
@@ -58,7 +62,7 @@ def get_installed_models() -> list:
             _model_cache["models"] = [line.split()[0] for line in lines if line.strip()]
             _model_cache["updated"] = time.time()
         except Exception:
-            pass
+            logger.warning("Failed to list Ollama models — using cached list", exc_info=True)
     return _model_cache["models"]
 
 

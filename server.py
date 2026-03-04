@@ -26,8 +26,11 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.fast_classifier import fast_classify
+from core.log import get_logger
 from core.router import route_to_model
 from core.token_budget import get_token_budget
+
+logger = get_logger("server")
 from memory.store import AgentMemory
 from memory.user_model import UserModel
 from memory.personality import PersonalityConfig
@@ -101,12 +104,12 @@ async def lifespan(app: FastAPI):
                     ollama.generate, model="qwen3.5:0.8b",
                     prompt="hi", options={"num_predict": 1, "num_ctx": 1024},
                 )
-                print("[KEEPALIVE] qwen3.5:0.8b warmed", flush=True)
+                logger.debug("keepalive: qwen3.5:0.8b warmed")
             except Exception:
                 pass
             try:
                 await asyncio.to_thread(ollama.embeddings, model="nomic-embed-text", prompt="hi")
-                print("[KEEPALIVE] nomic-embed-text warmed", flush=True)
+                logger.debug("keepalive: nomic-embed-text warmed")
             except Exception:
                 pass
     asyncio.create_task(_keepalive(), name="keepalive")
@@ -122,15 +125,15 @@ async def lifespan(app: FastAPI):
             _ollama.generate, model="qwen3.5:0.8b",
             prompt="hi", options={"num_predict": 1, "num_ctx": 1024},
         )
-        print("[SERVER] Warmed qwen3.5:0.8b", flush=True)
+        logger.info("Warmed qwen3.5:0.8b")
     except Exception as _e:
-        print(f"[SERVER] Could not warm qwen3.5:0.8b: {_e}", flush=True)
+        logger.warning("Could not warm qwen3.5:0.8b: %s", _e)
     # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
-        print("[SERVER] Warmed nomic-embed-text", flush=True)
+        logger.info("Warmed nomic-embed-text")
     except Exception as _e:
-        print(f"[SERVER] Could not warm nomic-embed-text: {_e}", flush=True)
+        logger.warning("Could not warm nomic-embed-text: %s", _e)
 
     name = personality.name or "Assistant"
 
@@ -153,13 +156,13 @@ async def lifespan(app: FastAPI):
                 if greeting:
                     await broadcast({"type": "greeting", "message": greeting})
         except Exception as e:
-            print(f"[GREETING] {e}")
+            logger.warning("Startup greeting failed: %s", e)
 
     asyncio.create_task(_startup_greeting())
 
-    print(f"[SERVER] Ready → http://localhost:8765")
-    print(f"[SERVER] Assistant: {name} | Configured: {personality.is_configured}")
-    print(f"[SERVER] Skills: {len(registry.skills)} | Tasks: {task_queue.summary()}")
+    logger.info("Ready → http://localhost:8765")
+    logger.info("Assistant: %s | Configured: %s", name, personality.is_configured)
+    logger.info("Skills: %d | Tasks: %s", len(registry.skills), task_queue.summary())
 
     yield
     heartbeat.stop()
@@ -297,7 +300,7 @@ async def chat_stop():
 
 async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncGenerator[str, None]:
     def sse(t, **kw):
-        print(f"[SSE] {t}: {kw}", flush=True)
+        logger.debug("SSE %s: %s", t, kw)
         return _sse({"type": t, **kw})
 
     t0 = time.time()
@@ -307,7 +310,7 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     _add_to_history(session_id, "user", user_message)
     intent = fast_classify(user_message)
     category = intent.get("category", "general_chat")
-    print(f"[CLASSIFY] {intent['_source']}: {category} for: {user_message[:50]}", flush=True)
+    logger.info("classify [%s]: %s → %s", intent["_source"], user_message[:50], category)
 
     # Get user context — cached 30s DB read, run in thread to avoid blocking event loop
     user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
@@ -370,11 +373,11 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
             )
             injected = str(search_results)[:6000]
             system = system + f"\n\nWEB SEARCH RESULTS for '{rewritten}':\n{injected}\n\nSynthesize these results into a helpful, accurate response."
-            print(f"[WEB SEARCH] Pre-executed for: {rewritten[:50]}", flush=True)
+            logger.info("web_search pre-executed for: %s", rewritten[:50])
         except asyncio.TimeoutError:
-            print("[WEB SEARCH] Pre-execute timed out after 20s", flush=True)
+            logger.warning("web_search pre-execute timed out after 20s")
         except Exception as e:
-            print(f"[WEB SEARCH] Pre-execute failed: {e}", flush=True)
+            logger.warning("web_search pre-execute failed: %s", e)
 
     # For web_browsing with a simple URL: pre-fetch the page content.
     # Faster and more reliable than relying on the model to emit SKILL: correctly.
@@ -396,11 +399,11 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                     )
                     injected = str(page_content)[:6000]
                     system = system + f"\n\nPAGE CONTENT from {found_url}:\n{injected}\n\nAnswer based on this content."
-                    print(f"[WEB_FETCH] Pre-executed for: {found_url[:60]}", flush=True)
+                    logger.info("web_fetch pre-executed for: %s", found_url[:60])
                 except asyncio.TimeoutError:
-                    print(f"[WEB_FETCH] Pre-execute timed out after 20s for: {found_url[:60]}", flush=True)
+                    logger.warning("web_fetch pre-execute timed out after 20s for: %s", found_url[:60])
                 except Exception as e:
-                    print(f"[WEB_FETCH] Pre-execute failed: {e}", flush=True)
+                    logger.warning("web_fetch pre-execute failed: %s", e)
 
     # For image/screenshot tasks: pre-run vision skill if a file path is in the message
     if category in {"screenshot_analysis", "image_description"}:
@@ -418,11 +421,11 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                 )
                 injected = str(vision_result)[:6000]
                 system = system + f"\n\nIMAGE ANALYSIS of {img_path}:\n{injected}\n\nAnswer based on this analysis."
-                print(f"[VISION] Pre-executed for: {img_path}", flush=True)
+                logger.info("vision pre-executed for: %s", img_path)
             except asyncio.TimeoutError:
-                print(f"[VISION] Pre-execute timed out after 30s for: {img_path}", flush=True)
+                logger.warning("vision pre-execute timed out after 30s for: %s", img_path)
             except Exception as e:
-                print(f"[VISION] Pre-execute failed: {e}", flush=True)
+                logger.warning("vision pre-execute failed: %s", e)
 
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
@@ -455,10 +458,10 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                 final = data.get("output", final)
                 break
     except asyncio.TimeoutError:
-        print(f"[CHAT TIMEOUT] Model took too long", flush=True)
+        logger.warning("Chat model timed out")
         final = "Sorry, that took too long. Please try again."
     except Exception as e:
-        print(f"[CHAT ERROR] {type(e).__name__}: {e}", flush=True)
+        logger.error("Chat error: %s: %s", type(e).__name__, e, exc_info=True)
         final = "Something went wrong — please try again."
 
     # If personality was changed, hot-reload the config so next message uses new settings

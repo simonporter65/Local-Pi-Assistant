@@ -12,6 +12,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from core.log import get_logger
+
+logger = get_logger("personality")
+
 PERSONALITY_FILE = os.environ.get(
     "PERSONALITY_FILE",
     str(Path(__file__).parent.parent / "memory" / "personality.json")
@@ -66,7 +70,7 @@ class PersonalityConfig:
         with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
         self._config = config
-        print(f"[PERSONALITY] Saved: {config.get('name')} / {config.get('profile')}")
+        logger.info("Saved: %s / %s", config.get("name"), config.get("profile"))
 
     @staticmethod
     def _build_prompt(name: str, flavors: dict) -> str:

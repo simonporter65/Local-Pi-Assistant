@@ -26,6 +26,9 @@ from typing import Callable, Optional, Set
 from autonomous.task_queue import TaskQueue, _in_hours, _in_minutes
 from autonomous.curiosity import get_curiosity_question
 from autonomous.training_curator import curate_training_data, should_ask_opt_in, snooze_opt_in, get_training_status
+from core.log import get_logger
+
+logger = get_logger("heartbeat")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -167,7 +170,7 @@ class HeartbeatLoop:
     async def run(self):
         """The main heartbeat loop. Run this as an asyncio task."""
         self._running = True
-        print("[HEARTBEAT] Background loop started")
+        logger.info("Background loop started")
 
         # Initial startup delay — let the server stabilise and models warm up fully
         # 3 min gives uvicorn time to bind, warmup to finish, and Ollama queue to clear
@@ -177,7 +180,7 @@ class HeartbeatLoop:
             try:
                 await self._tick()
             except Exception as e:
-                print(f"[HEARTBEAT] Loop error: {e}")
+                logger.error("Loop error: %s", e, exc_info=True)
 
             # Sleep until next heartbeat
             await asyncio.sleep(HEARTBEAT_INTERVAL)
@@ -218,14 +221,14 @@ class HeartbeatLoop:
                             )
                             return
                     except Exception as e:
-                        pass
+                        logger.warning("Curiosity question failed: %s", e, exc_info=True)
                 # Curate training data during idle time
                 try:
                     result = await asyncio.to_thread(curate_training_data, self.db_path)
                     if result["curated"] > 0:
                         await self._notify("training", f"📚 Curated {result['curated']} training examples ({result['total_curated']} total)")
                 except Exception:
-                    pass
+                    logger.warning("Training curation failed", exc_info=True)
 
                 # Check if we should ask user to opt into LoRA training
                 try:
@@ -238,7 +241,7 @@ class HeartbeatLoop:
                         await self._notify("lora_opt_in", opt_in_question)
                         await asyncio.to_thread(snooze_opt_in, self.db_path, 30)
                 except Exception:
-                    pass
+                    logger.warning("LoRA opt-in check failed", exc_info=True)
 
                 await self._notify("reflecting", "Queue empty — reflecting on what to do next...")
                 await self._run_reflection()
@@ -319,7 +322,7 @@ class HeartbeatLoop:
                     )
                     await self._notify("task_added", f"+ Added follow-up: {nt.get('title', '')}")
                 except Exception as e:
-                    print(f"[HEARTBEAT] Error adding follow-up task: {e}")
+                    logger.warning("Error adding follow-up task: %s", e)
 
             # Log to memory
             await asyncio.to_thread(
@@ -520,7 +523,7 @@ class HeartbeatLoop:
                     if self.is_paused():
                         try: s.close()
                         except Exception: pass
-                        print("[HEARTBEAT] Reflection aborted — user active", flush=True)
+                        logger.debug("Reflection aborted — user active")
                         return toks, True
                     tok = chunk.get("response") or ""
                     if tok:
@@ -531,10 +534,10 @@ class HeartbeatLoop:
             if aborted:
                 return
             text = "".join(tokens).strip()
-            print(f"[HEARTBEAT] Reflection raw ({len(text)}): {text[:200]}")
+            logger.debug("Reflection raw (%d chars): %s", len(text), text[:200])
             match = re.search(r"\[.*\]", text, re.DOTALL)
             if not match:
-                print(f"[HEARTBEAT] Reflection: no JSON array found in response")
+                logger.warning("Reflection: no JSON array found in response")
                 return
 
             # Use raw_decode to safely parse just the first valid JSON structure
@@ -561,13 +564,13 @@ class HeartbeatLoop:
             await self._notify("tasks_generated", f"🧠 Reflection complete — added {added} new tasks")
 
         except Exception as e:
-            print(f"[HEARTBEAT] Reflection error: {e}")
+            logger.error("Reflection error: %s", e, exc_info=True)
 
     # ── Notifications to UI ───────────────────────────────────────────────
 
     async def _notify(self, event_type: str, message: str, **kwargs):
         """Broadcast a heartbeat event to all connected UI clients."""
-        print(f"[HEARTBEAT] {message}")
+        logger.info(message)
         try:
             await self.broadcast({
                 "type": f"heartbeat_{event_type}",
@@ -579,7 +582,7 @@ class HeartbeatLoop:
                    if kwargs.get("task") else {}),
             })
         except Exception as e:
-            print(f"[HEARTBEAT] Notify error: {e}")
+            logger.warning("Notify error: %s", e)
 
     def stop(self):
         self._running = False

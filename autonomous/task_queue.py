@@ -26,6 +26,10 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+from core.log import get_logger
+
+logger = get_logger("taskqueue")
+
 
 PRIORITIES = {
     "critical": 0,
@@ -57,7 +61,7 @@ class TaskQueue:
         ).rowcount
         self.db.commit()
         if n:
-            print(f"[TASKQUEUE] Reset {n} stuck running task(s) to pending")
+            logger.info("Reset %d stuck running task(s) to pending", n)
 
     def _ensure_schema(self):
         self.db.executescript("""

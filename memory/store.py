@@ -12,6 +12,10 @@ import numpy as np
 from datetime import datetime
 from typing import Optional
 
+from core.log import get_logger
+
+logger = get_logger("memory")
+
 # Thread pool for background embedding — caps concurrent Ollama calls
 _embed_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
 
@@ -33,7 +37,7 @@ class AgentMemory:
         self.db.execute("PRAGMA mmap_size=268435456")  # 256 MB memory-mapped I/O
         self.db.execute("PRAGMA temp_store=MEMORY")    # temp tables in RAM
         self._init_schema()
-        print(f"[MEMORY] Database: {db_path}")
+        logger.info("Database: %s", db_path)
 
     def _init_schema(self):
         self.db.executescript("""
@@ -139,7 +143,7 @@ class AgentMemory:
             )
             self.db.commit()
         except Exception:
-            pass  # Embeddings are best-effort; don't fail the whole interaction
+            logger.debug("Embedding failed for interaction %d (best-effort)", interaction_id, exc_info=True)
 
     def semantic_search(self, query: str, top_k: int = 5) -> list:
         """Find past interactions semantically similar to the query."""

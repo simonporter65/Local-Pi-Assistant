@@ -11,6 +11,10 @@ import json
 import threading
 import traceback
 
+from core.log import get_logger
+
+logger = get_logger("skills")
+
 
 SKILLS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -50,11 +54,10 @@ class SkillRegistry:
             if hasattr(mod, "run") and hasattr(mod, "DESCRIPTION"):
                 self.skills[name] = mod
             else:
-                print(f"[SKILLS] Skipped {name}: missing 'run' or 'DESCRIPTION'")
+                logger.warning("Skipped %s: missing 'run' or 'DESCRIPTION'", name)
 
         except Exception as e:
-            print(f"[SKILLS] Error loading {name}: {e}")
-            traceback.print_exc()
+            logger.error("Error loading %s: %s", name, e, exc_info=True)
 
     def reload(self):
         """Hot-reload all skills — call this after skill_writer creates a new skill."""

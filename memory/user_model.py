@@ -13,6 +13,10 @@ import time as _time
 from datetime import datetime, date
 from typing import Optional
 
+from core.log import get_logger
+
+logger = get_logger("user_model")
+
 # Module-level cache for get_context_for_prompt (invalidated on fact write)
 _ctx_cache: dict = {"value": "", "expires": 0.0}
 
@@ -159,7 +163,7 @@ class UserModel:
                         source="llm_extract"
                     )
         except Exception:
-            pass
+            logger.warning("LLM fact extraction failed", exc_info=True)
 
     def _heuristic_extract(self, text: str):
         """Fast pattern-based extraction for common facts."""
@@ -357,7 +361,7 @@ class UserModel:
             if len(result) > len(response) * 0.5:
                 return result
         except Exception:
-            pass
+            logger.warning("LLM personalisation failed — using raw response", exc_info=True)
 
         return response
 
