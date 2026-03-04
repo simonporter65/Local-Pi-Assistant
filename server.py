@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
             try:
                 await asyncio.to_thread(
                     ollama.generate, model="qwen3.5:0.8b",
-                    prompt="hi", options={"num_predict": 1, "num_ctx": 64},
+                    prompt="hi", options={"num_predict": 1, "num_ctx": 1024},
                 )
                 print("[KEEPALIVE] qwen3.5:0.8b warmed", flush=True)
             except Exception:
@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
     try:
         await asyncio.to_thread(
             _ollama.generate, model="qwen3.5:0.8b",
-            prompt="hi", options={"num_predict": 1, "num_ctx": 64},
+            prompt="hi", options={"num_predict": 1, "num_ctx": 1024},
         )
         print("[SERVER] Warmed qwen3.5:0.8b", flush=True)
     except Exception as _e:
