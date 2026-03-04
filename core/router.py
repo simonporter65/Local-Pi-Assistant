@@ -2,11 +2,15 @@
 core/router.py
 Routes tasks to the best available model.
 
-Model strategy: all Qwen3.5 edge models.
-- qwen3.5:0.8b  fast direct-mode chat and utility (think=False)
-- qwen3.5:2b    accuracy-critical tasks, thinking or direct depending on category
+Model stack (all Qwen thinking models, think=False as top-level kwarg):
+- qwen3.5:0.8b  fastest — direct-mode chat and utility (1 GB)
+- qwen3.5:2b    fast — medium complexity, direct or light thinking (2.7 GB)
+- qwen3:4b      medium — planning/research, direct mode (2.5 GB)
+- qwen3:8b      thorough — accuracy-critical, thinking mode (5 GB)
+- llava:7b      vision tasks (4.7 GB)
 
 think=False must be passed as a top-level kwarg to ollama.chat(), NOT inside options.
+For ollama.generate() calls use /no_think prefix in the prompt instead.
 route_to_model() returns a "thinking" bool — caller is responsible for passing it.
 
 If scripts/lora_train.py has been run and created arc-personal, that model is
@@ -62,7 +66,7 @@ def get_installed_models() -> list:
 # thinking=False  → pass think=False to ollama.chat() (direct/fast mode)
 # thinking=True   → omit think kwarg (model reasons before answering)
 MODEL_MAP = {
-    # ── Direct mode: fast conversational ─────────────────────────────────────
+    # ── Tier 1: qwen3.5:0.8b — instant conversational ────────────────────────
     "general_chat":           {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "summarization":          {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "translation":            {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
@@ -70,23 +74,25 @@ MODEL_MAP = {
     "intent_classification":  {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "sentiment_analysis":     {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "web_search":             {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
-    "planning":               {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
-    "research":               {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
-    "creative_writing":       {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
-    "agentic_task":           {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
 
-    # ── Thinking mode: accuracy-critical ─────────────────────────────────────
-    "coding":                 {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "debugging":              {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "shell_command":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "web_browsing":           {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "skill_writing":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "structured_output":      {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "file_management":        {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "data_analysis":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "math":                   {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "reasoning":              {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
-    "error_recovery":         {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    # ── Tier 2: qwen3:4b — medium complexity, direct mode ────────────────────
+    "planning":               {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
+    "research":               {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
+    "creative_writing":       {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
+    "agentic_task":           {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
+
+    # ── Tier 3: qwen3:8b — accuracy-critical, thinking mode ──────────────────
+    "coding":                 {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "debugging":              {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "shell_command":          {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "web_browsing":           {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "skill_writing":          {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "structured_output":      {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "file_management":        {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "data_analysis":          {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "math":                   {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "reasoning":              {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
+    "error_recovery":         {"model": "qwen3:8b",     "latency": "slow",   "thinking": True},
 
     # ── Vision ────────────────────────────────────────────────────────────────
     "image_description":      {"model": "llava:7b",     "latency": "slow",   "thinking": False},
@@ -95,9 +101,11 @@ MODEL_MAP = {
 
 # Fallback chains: if primary not installed, try these in order
 FALLBACK_CHAINS = {
-    "qwen3.5:0.8b": ["qwen3.5:2b", "qwen3:1.7b", "qwen3:0.6b"],
-    "qwen3.5:2b":   ["qwen3.5:0.8b", "qwen3:1.7b"],
-    "llava:7b":     ["llava:13b", "qwen3.5:2b"],
+    "qwen3.5:0.8b": ["qwen3.5:2b", "qwen3:4b", "qwen3:1.7b", "qwen3:0.6b"],
+    "qwen3.5:2b":   ["qwen3:4b", "qwen3.5:0.8b", "qwen3:1.7b"],
+    "qwen3:4b":     ["qwen3.5:2b", "qwen3:8b", "qwen3:1.7b"],
+    "qwen3:8b":     ["qwen3:4b", "qwen3.5:2b"],
+    "llava:7b":     ["qwen3.5:2b"],
 }
 
 DEFAULT = {"model": "qwen3.5:0.8b", "latency": "fast", "thinking": False}
