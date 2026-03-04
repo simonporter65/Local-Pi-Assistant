@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
         import ollama
         while True:
             await asyncio.sleep(180)
-            for mdl in ["llama3.2:3b", "qwen2.5:0.5b"]:
+            for mdl in ["qwen3:0.6b", "qwen2.5:0.5b"]:
                 try:
                     await asyncio.to_thread(
                         ollama.generate, model=mdl,
@@ -117,7 +117,7 @@ async def lifespan(app: FastAPI):
 
     # Warm key models before announcing readiness — first message will be instant
     import ollama as _ollama
-    for _mdl in ["llama3.2:3b", "qwen2.5:0.5b"]:
+    for _mdl in ["qwen3:0.6b", "qwen2.5:0.5b"]:
         try:
             await asyncio.to_thread(
                 _ollama.generate, model=_mdl,
@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI):
             if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
                 resp = await asyncio.to_thread(
                     _ollama.generate,
-                    model="llama3.2:3b",
+                    model="qwen3:0.6b",
                     prompt=(
                         f"You are {name}. You know this about your user:\n{ctx}\n\n"
                         f"Write a warm 1-sentence greeting acknowledging what you remember. "
@@ -307,6 +307,9 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     latency = route.get("latency", "fast")
     budget  = get_token_budget(latency, category)
 
+    yield sse("model", name=model, latency=latency, category=category)
+    await asyncio.sleep(0)
+
     rewritten = user_message
     # Only search memory if message references past context
     memory_triggers = {"remember", "earlier", "last time", "you said", "we discussed",
@@ -461,10 +464,13 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
 
         if first_call:
             first_call = False
+            # qwen3 models default to thinking mode — disable for fast chat
+            extra = {"think": False} if model.startswith("qwen3:") else {}
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
+                **extra
             )
             collected = []
             streaming_started = False
