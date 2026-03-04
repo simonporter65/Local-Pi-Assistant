@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.fast_classifier import fast_classify
-from core.router import route_to_model, get_fallback
+from core.router import route_to_model
 from core.token_budget import get_token_budget
 from memory.store import AgentMemory
 from memory.user_model import UserModel
@@ -540,16 +540,19 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                     continue
                 collected.append(token)
                 token_buffer += token
-                # Don't stream until we know it's not a FINAL: prefix
+                # Buffer the start to detect SKILL:/FINAL: before streaming
                 if not streaming_started:
                     if "FINAL:" in token_buffer:
-                        # Strip FINAL: and start streaming the rest
+                        # Strip FINAL: prefix and stream the rest
                         token_buffer = token_buffer.split("FINAL:", 1)[1].lstrip()
                         streaming_started = True
                         if token_buffer:
                             yield ("token", token_buffer)
-                    elif len(token_buffer) > 4:
-                        # No FINAL: coming — stream normally
+                    elif token_buffer.lstrip().startswith("SKILL:") or token_buffer.lstrip().startswith("{\""):
+                        # It's a tool call — don't stream the JSON, let post-stream logic handle it
+                        pass  # keep buffering silently
+                    elif len(token_buffer) > 40:
+                        # Long enough to confirm it's regular content — stream it
                         streaming_started = True
                         yield ("token", token_buffer)
                 else:
