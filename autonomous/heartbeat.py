@@ -371,47 +371,35 @@ class HeartbeatLoop:
                     "new_tasks": [],
                 }
 
+            def _chat_stream_sync(model, opts):
+                """Run in thread: stream ollama.chat, abort if paused."""
+                s = ollama.chat(model=model, messages=messages, stream=True,
+                                think=False, options=opts)
+                toks = []
+                for chunk in s:
+                    if self.is_paused():
+                        try: s.close()
+                        except Exception: pass
+                        return toks, True
+                    tok = chunk.get("message", {}).get("content") or ""
+                    if tok:
+                        toks.append(tok)
+                return toks, False
+
             try:
-                stream = await asyncio.to_thread(
-                    ollama.chat,
-                    model=BACKGROUND_MODEL,
-                    messages=messages,
-                    stream=True,
-                    think=False,
-                    options={
-                        "temperature": 0.6,
-                        "num_predict": BACKGROUND_TOKEN_BUDGET,
-                        "num_ctx": 2048,
-                    }
+                tokens, aborted = await asyncio.to_thread(
+                    _chat_stream_sync, BACKGROUND_MODEL,
+                    {"temperature": 0.6, "num_predict": BACKGROUND_TOKEN_BUDGET, "num_ctx": 2048}
                 )
             except ollama.ResponseError as e:
                 if "out of memory" in str(e).lower():
-                    stream = await asyncio.to_thread(
-                        ollama.chat,
-                        model=BACKGROUND_MODEL_FALLBACK,
-                        messages=messages,
-                        stream=True,
-                        think=False,
-                        options={"temperature": 0.6, "num_predict": 800, "num_ctx": 4096}
+                    tokens, aborted = await asyncio.to_thread(
+                        _chat_stream_sync, BACKGROUND_MODEL_FALLBACK,
+                        {"temperature": 0.6, "num_predict": 800, "num_ctx": 4096}
                     )
                 else:
                     raise
 
-            # Stream chunks — abort immediately if user becomes active
-            tokens = []
-            aborted = False
-            for chunk in stream:
-                if self.is_paused():
-                    aborted = True
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
-                    break
-                tok = chunk.get("message", {}).get("content") or ""
-                if tok:
-                    tokens.append(tok)
-                await asyncio.sleep(0)  # yield to event loop between chunks
             if aborted:
                 return {
                     "output": f"Task paused (user active). Partial: {''.join(tokens)[:200]}",
@@ -516,27 +504,27 @@ class HeartbeatLoop:
                 pending_count=pending_count,
                 skills=self.registry.list_skill_names(),
             )
-            stream = await asyncio.to_thread(
-                ollama.generate,
-                model=REFLECT_MODEL,
-                prompt=reflect_prompt,
-                stream=True,
-                options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000},
-            )
+            def _reflect_stream_sync():
+                """Run in thread: stream ollama.generate, abort if paused."""
+                s = ollama.generate(
+                    model=REFLECT_MODEL, prompt=reflect_prompt, stream=True,
+                    options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000},
+                )
+                toks = []
+                for chunk in s:
+                    if self.is_paused():
+                        try: s.close()
+                        except Exception: pass
+                        print("[HEARTBEAT] Reflection aborted — user active", flush=True)
+                        return toks, True
+                    tok = chunk.get("response") or ""
+                    if tok:
+                        toks.append(tok)
+                return toks, False
 
-            tokens = []
-            for chunk in stream:
-                if self.is_paused():
-                    try:
-                        stream.close()
-                    except Exception:
-                        pass
-                    print("[HEARTBEAT] Reflection aborted — user active", flush=True)
-                    return
-                tok = chunk.get("response") or ""
-                if tok:
-                    tokens.append(tok)
-                await asyncio.sleep(0)
+            tokens, aborted = await asyncio.to_thread(_reflect_stream_sync)
+            if aborted:
+                return
             text = "".join(tokens).strip()
             print(f"[HEARTBEAT] Reflection raw ({len(text)}): {text[:200]}")
             match = re.search(r"\[.*\]", text, re.DOTALL)
