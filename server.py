@@ -340,6 +340,24 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
         except Exception as e:
             print(f"[WEB SEARCH] Pre-execute failed: {e}", flush=True)
 
+    # For image/screenshot tasks: pre-run vision skill if a file path is in the message
+    if category in {"screenshot_analysis", "image_description"}:
+        import re as _re
+        img_match = _re.search(r'(/[^\s"\']+\.(?:png|jpg|jpeg|gif|webp))', user_message, _re.I)
+        if img_match:
+            yield sse("stage", message="Analyzing image...")
+            await asyncio.sleep(0)
+            try:
+                img_path = img_match.group(1)
+                question = user_message.replace(img_path, "").strip() or "Describe what you see in detail."
+                vision_result = await asyncio.to_thread(
+                    registry.run, "vision", image_path=img_path, question=question
+                )
+                system = system + f"\n\nIMAGE ANALYSIS of {img_path}:\n{vision_result}\n\nAnswer based on this analysis."
+                print(f"[VISION] Pre-executed for: {img_path}", flush=True)
+            except Exception as e:
+                print(f"[VISION] Pre-execute failed: {e}", flush=True)
+
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
 
@@ -348,7 +366,8 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
 
     # Use skills for agentic categories (not web_search — handled above)
     use_skills = category in {"research", "coding", "debugging",
-                              "agentic_task", "data_analysis", "file_management", "shell_command"}
+                              "agentic_task", "data_analysis", "file_management", "shell_command",
+                              "screenshot_analysis", "image_description"}
     try:
         async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id), use_skills=use_skills):
             if event_type == "token":
