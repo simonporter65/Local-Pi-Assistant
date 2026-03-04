@@ -90,8 +90,8 @@ class ProactiveEngine:
 
         try:
             resp = ollama.generate(
-                model="llama3.2:3b",
-                prompt=SIDEBAR_SUGGESTIONS_PROMPT.format(
+                model="qwen3.5:0.8b",
+                prompt="/no_think\n" + SIDEBAR_SUGGESTIONS_PROMPT.format(
                     user_context=user_context[:600],
                     recent_summary=recent[:300],
                     time_str=time_str,
@@ -147,8 +147,8 @@ class ProactiveEngine:
 
         try:
             resp = ollama.generate(
-                model="llama3.2:3b",
-                prompt=PROACTIVE_PUSH_PROMPT.format(
+                model="qwen3.5:0.8b",
+                prompt="/no_think\n" + PROACTIVE_PUSH_PROMPT.format(
                     user_context=user_context[:400],
                     user_message=user_message[:200],
                     response_summary=assistant_response[:200],

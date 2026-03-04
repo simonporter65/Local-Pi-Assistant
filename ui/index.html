@@ -382,7 +382,7 @@
     padding: 7px 12px;
   }
 
-  /* ── Thinking bubble (DeepSeek R1) ── */
+  /* ── Thinking bubble (streaming reasoning) ── */
   .bubble.think-msg {
     background: rgba(245,158,11,0.08);
     border: 1px solid rgba(245,158,11,0.2);
@@ -393,6 +393,45 @@
     max-height: 120px;
     overflow-y: auto;
   }
+  /* Live streaming thinking widget */
+  .thinking-widget {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 4px;
+  }
+  .thinking-widget summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: #6b7280;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .thinking-widget summary::-webkit-details-marker { display: none; }
+  .thinking-widget[open] summary { color: #9ca3af; }
+  .thinking-widget .think-body {
+    font-size: 11px;
+    color: #6b7280;
+    font-style: italic;
+    line-height: 1.5;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 4px 8px;
+    border-left: 2px solid #374151;
+    margin-top: 2px;
+    white-space: pre-wrap;
+  }
+  .thinking-dot {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #6b7280;
+    animation: blink 1s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:0.3} 50%{opacity:1} }
 
   /* ── Timestamp ── */
   .msg-time {
@@ -936,6 +975,10 @@ let streamingBubbleEl = null;
 let streamingBubbleRow = null;
 let streamingText = '';
 let quickAckEl = null;
+// Live thinking state
+let thinkingWidgetEl = null;   // the <details> element
+let thinkingBodyEl   = null;   // the text container inside it
+let thinkingText     = '';
 
 function handleStreamEvent(event, stageEl) {
   switch (event.type) {
@@ -952,7 +995,49 @@ function handleStreamEvent(event, stageEl) {
       }
       break;
 
+    case 'thinking_token': {
+      // Stream thinking text into a collapsible grey widget above the response
+      if (!thinkingWidgetEl) {
+        if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
+        const row = document.createElement('div');
+        row.className = 'msg-row agent';
+        const av = document.createElement('div');
+        av.className = 'msg-avatar-sm';
+        av.textContent = '🤖';
+        const wrap = document.createElement('div');
+        wrap.className = 'bubble-wrap';
+        const details = document.createElement('details');
+        details.className = 'thinking-widget';
+        details.open = false;
+        const summary = document.createElement('summary');
+        summary.innerHTML = '<span class="thinking-dot"></span> Thinking…';
+        const body = document.createElement('div');
+        body.className = 'think-body';
+        details.appendChild(summary);
+        details.appendChild(body);
+        wrap.appendChild(details);
+        row.appendChild(av);
+        row.appendChild(wrap);
+        document.getElementById('messages').appendChild(row);
+        thinkingWidgetEl = details;
+        thinkingBodyEl   = body;
+        thinkingText     = '';
+      }
+      thinkingText += event.text;
+      thinkingBodyEl.textContent = thinkingText;
+      // Auto-scroll inside the think box
+      thinkingBodyEl.scrollTop = thinkingBodyEl.scrollHeight;
+      scrollToBottom();
+      break;
+    }
+
     case 'token':
+      // When content starts arriving, collapse the thinking widget
+      if (thinkingWidgetEl) {
+        thinkingWidgetEl.querySelector('summary').innerHTML = '💭 See reasoning';
+        thinkingWidgetEl.open = false;
+        thinkingWidgetEl = null;  // stop appending to it
+      }
       if (!streamingBubbleEl) {
         if (quickAckEl) { removeElement(quickAckEl); quickAckEl = null; }
         if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
@@ -997,12 +1082,12 @@ function handleStreamEvent(event, stageEl) {
       break;
 
     case 'model': {
-      // Show which model is responding in the status bar briefly
-      const shortName = (event.name || '').split(':')[0].replace('llama', 'llama').replace('qwen', 'qwen');
+      const shortName = (event.name || '').replace(':latest','');
+      const thinkingFlag = event.thinking ? ' · 🤔' : '';
       const sub = document.getElementById('headerSub');
       if (sub) {
-        sub.textContent = `${shortName} · ${event.category || ''}`;
-        setTimeout(() => { sub.textContent = 'Always private. Always local.'; }, 8000);
+        sub.textContent = `${shortName}${thinkingFlag} · ${event.category || ''}`;
+        setTimeout(() => { sub.textContent = 'Always private. Always local.'; }, 10000);
       }
       break;
     }
@@ -1035,6 +1120,9 @@ function handleStreamEvent(event, stageEl) {
       streamingBubbleEl = null;
       streamingBubbleRow = null;
       streamingText = '';
+      thinkingWidgetEl = null;
+      thinkingBodyEl   = null;
+      thinkingText     = '';
       isProcessing = false;
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('messageInput').focus();

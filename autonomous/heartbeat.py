@@ -31,9 +31,9 @@ from autonomous.training_curator import curate_training_data, should_ask_opt_in,
 HEARTBEAT_INTERVAL   = 5 * 60   # Check queue every 5 minutes
 USER_PAUSE_COOLDOWN  = 30       # Wait 30s after user interaction before resuming
 MAX_TASK_DURATION    = 10 * 60  # Kill a task after 10 minutes
-BACKGROUND_MODEL     = "llama3.2:1b"  # Use 1b for background — leaves 3b free for chat
-CURIOSITY_INTERVAL   = 10  # Ask a curiosity question every N heartbeat cycles
-BACKGROUND_MODEL_FALLBACK = "llama3.1:8b"
+BACKGROUND_MODEL          = "qwen3.5:0.8b"  # Fast direct-mode for background tasks
+CURIOSITY_INTERVAL        = 10              # Ask a curiosity question every N heartbeat cycles
+BACKGROUND_MODEL_FALLBACK = "qwen3.5:2b"   # Fallback if 0.8b unavailable
 
 # Token budget for background tasks — don't be greedy
 BACKGROUND_TOKEN_BUDGET = 1500
@@ -375,6 +375,7 @@ class HeartbeatLoop:
                     ollama.chat,
                     model=BACKGROUND_MODEL,
                     messages=messages,
+                    think=False,
                     options={
                         "temperature": 0.6,
                         "num_predict": BACKGROUND_TOKEN_BUDGET,
@@ -383,17 +384,17 @@ class HeartbeatLoop:
                 )
             except ollama.ResponseError as e:
                 if "out of memory" in str(e).lower():
-                    # Try fallback model
                     response = await asyncio.to_thread(
                         ollama.chat,
                         model=BACKGROUND_MODEL_FALLBACK,
                         messages=messages,
+                        think=False,
                         options={"temperature": 0.6, "num_predict": 800, "num_ctx": 4096}
                     )
                 else:
                     raise
 
-            raw = response["message"]["content"]
+            raw = response["message"].get("content") or ""
             last_reply = raw
 
             # DeepSeek think blocks
@@ -483,21 +484,20 @@ class HeartbeatLoop:
                 for t in completed
             ]) or "None yet."
 
-            # Use llama3.1:8b for reflection — it follows JSON output instructions
-            # reliably. qwen3.5:0.8b only produces thinking tokens (no visible output).
-            # llama3.2:1b generates prose instead of JSON.
-            # Reflection only runs when queue is empty (~once per 5 min), so RAM is fine.
-            REFLECT_MODEL = "llama3.1:8b"
+            # qwen3.5:2b with think=False for JSON generation — direct mode is reliable
+            REFLECT_MODEL = "qwen3.5:2b"
+            # /no_think prefix suppresses Qwen3.5 reasoning for clean JSON output
+            reflect_prompt = "/no_think\n" + REFLECT_PROMPT.format(
+                completed_tasks=completed_summary,
+                user_context=user_context,
+                pending_count=pending_count,
+                skills=self.registry.list_skill_names(),
+            )
             resp = await asyncio.to_thread(
                 ollama.generate,
                 model=REFLECT_MODEL,
-                prompt=REFLECT_PROMPT.format(
-                    completed_tasks=completed_summary,
-                    user_context=user_context,
-                    pending_count=pending_count,
-                    skills=self.registry.list_skill_names(),
-                ),
-                options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000}
+                prompt=reflect_prompt,
+                options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000},
             )
 
             text = resp["response"].strip()

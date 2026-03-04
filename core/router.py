@@ -1,8 +1,13 @@
 """
 core/router.py
 Routes tasks to the best available model.
-Uses MODEL_MAP for explicit category→model mapping.
-Falls back gracefully if preferred model not installed.
+
+Model strategy: all Qwen3.5 edge models.
+- qwen3.5:0.8b  fast direct-mode chat and utility (think=False)
+- qwen3.5:2b    accuracy-critical tasks, thinking or direct depending on category
+
+think=False must be passed as a top-level kwarg to ollama.chat(), NOT inside options.
+route_to_model() returns a "thinking" bool — caller is responsible for passing it.
 
 If scripts/lora_train.py has been run and created arc-personal, that model is
 used for general_chat and conversational categories automatically.
@@ -18,6 +23,7 @@ _model_cache = {"models": [], "updated": 0.0}
 
 # Cache the personal model check — refresh every 10 minutes
 _personal_model_cache = {"model": None, "updated": 0.0}
+
 
 def _get_personal_model() -> str | None:
     """Return arc-personal model name if it has been built, else None."""
@@ -39,6 +45,7 @@ def _get_personal_model() -> str | None:
     _personal_model_cache["model"] = None
     return None
 
+
 def get_installed_models() -> list:
     if time.time() - _model_cache["updated"] > 300:
         try:
@@ -50,62 +57,61 @@ def get_installed_models() -> list:
             pass
     return _model_cache["models"]
 
-# Category → preferred model + latency
-# NOTE: qwen3.5 and qwen3 models are Qwen3 thinking models — in Ollama 0.17.4,
-# all tokens go to the `thinking` field; `response`/`content` is always empty.
-# Use llama3.2:3b for all conversational tasks until Ollama supports think=False.
+
+# Category → model, latency, and whether to use thinking mode
+# thinking=False  → pass think=False to ollama.chat() (direct/fast mode)
+# thinking=True   → omit think kwarg (model reasons before answering)
 MODEL_MAP = {
-    # Fast: simple chat
-    "intent_classification":  {"model": "llama3.2:3b",  "latency": "fast"},
-    "sentiment_analysis":     {"model": "llama3.2:3b",  "latency": "fast"},
-    "general_chat":           {"model": "llama3.2:3b",  "latency": "fast"},
-    "summarization":          {"model": "llama3.2:3b",  "latency": "fast"},
-    "task_management":        {"model": "llama3.2:3b",  "latency": "fast"},
-    "translation":            {"model": "llama3.2:3b",  "latency": "fast"},
+    # ── Direct mode: fast conversational ─────────────────────────────────────
+    "general_chat":           {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "summarization":          {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "translation":            {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "task_management":        {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "intent_classification":  {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "sentiment_analysis":     {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "web_search":             {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "planning":               {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
+    "research":               {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
+    "creative_writing":       {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
+    "agentic_task":           {"model": "qwen3.5:2b",   "latency": "normal", "thinking": False},
 
-    # Normal: capable 8B
-    "web_search":             {"model": "llama3.1:8b",         "latency": "normal"},
-    "research":               {"model": "llama3.1:8b",         "latency": "normal"},
-    "planning":               {"model": "llama3.1:8b",         "latency": "normal"},
-    "creative_writing":       {"model": "llama3.1:8b",         "latency": "normal"},
-    "image_description":      {"model": "llama3.2-vision:11b", "latency": "slow"},
+    # ── Thinking mode: accuracy-critical ─────────────────────────────────────
+    "coding":                 {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "debugging":              {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "shell_command":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "web_browsing":           {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "skill_writing":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "structured_output":      {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "file_management":        {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "data_analysis":          {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "math":                   {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "reasoning":              {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
+    "error_recovery":         {"model": "qwen3.5:2b",   "latency": "slow",   "thinking": True},
 
-    # Slow: specialist models — browser automation needs coder for reliable JSON/selectors
-    "web_browsing":           {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "coding":                 {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "debugging":              {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "shell_command":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "skill_writing":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "structured_output":      {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "file_management":        {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "data_analysis":          {"model": "qwen2.5-coder:7b",    "latency": "slow"},
-    "math":                   {"model": "deepseek-r1:7b",      "latency": "slow"},
-    "reasoning":              {"model": "deepseek-r1:7b",      "latency": "slow"},
-    "error_recovery":         {"model": "deepseek-r1:7b",      "latency": "slow"},
-    "agentic_task":           {"model": "llama3.1:8b",         "latency": "slow"},
-    "screenshot_analysis":    {"model": "llama3.2-vision:11b", "latency": "slow"},
+    # ── Vision ────────────────────────────────────────────────────────────────
+    "image_description":      {"model": "llava:7b",     "latency": "slow",   "thinking": False},
+    "screenshot_analysis":    {"model": "llava:7b",     "latency": "slow",   "thinking": False},
 }
 
-# Fallback chains: if primary not installed or fails, try these in order
+# Fallback chains: if primary not installed, try these in order
 FALLBACK_CHAINS = {
-    "llama3.2:3b":             ["llama3.2:1b",     "mistral:7b"],
-    "qwen2.5-coder:7b":        ["llama3.1:8b",     "mistral:7b",   "llama3.2:3b"],
-    "deepseek-r1:7b":          ["llama3.1:8b",     "mistral:7b",   "llama3.2:3b"],
-    "llama3.1:8b":             ["mistral:7b",       "llama3.2:3b"],
-    "llama3.2-vision:11b":     ["llava:13b",        "llava:7b",     "llama3.2:3b"],
-    "llava:7b":                ["llama3.2:3b"],
+    "qwen3.5:0.8b": ["qwen3.5:2b", "qwen3:1.7b", "qwen3:0.6b"],
+    "qwen3.5:2b":   ["qwen3.5:0.8b", "qwen3:1.7b"],
+    "llava:7b":     ["llava:13b", "qwen3.5:2b"],
 }
 
-DEFAULT = {"model": "llama3.2:3b", "latency": "fast"}
+DEFAULT = {"model": "qwen3.5:0.8b", "latency": "fast", "thinking": False}
 
 
 def route_to_model(intent: dict) -> dict:
     category = intent.get("category", "general_chat")
     route = MODEL_MAP.get(category, DEFAULT).copy()
 
-    # If arc-personal is built, use it for conversational categories
-    if category in {"general_chat", "summarization", "translation",
-                    "task_management", "creative_writing", "planning"}:
+    # If arc-personal is built, use it for conversational direct-mode categories
+    if not route["thinking"] and category in {
+        "general_chat", "summarization", "translation",
+        "task_management", "creative_writing", "planning",
+    }:
         personal = _get_personal_model()
         if personal:
             route["model"] = personal
@@ -118,7 +124,6 @@ def route_to_model(intent: dict) -> dict:
                 route["model"] = fallback
                 break
         else:
-            # Last resort — first installed model
             if installed:
                 route["model"] = installed[0]
 
@@ -127,5 +132,5 @@ def route_to_model(intent: dict) -> dict:
 
 def get_fallback(model: str) -> list:
     installed = get_installed_models()
-    chain = FALLBACK_CHAINS.get(model, ["llama3.1:8b", "llama3.2:3b"])
-    return [m for m in chain if m in installed] or [m for m in chain]
+    chain = FALLBACK_CHAINS.get(model, ["qwen3.5:0.8b"])
+    return [m for m in chain if m in installed] or list(chain)

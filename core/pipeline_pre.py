@@ -70,7 +70,7 @@ def run_pre_pipeline(user_message: str) -> dict:
 
     try:
         resp = ollama.generate(
-            model="llama3.2:3b",
+            model="qwen3.5:0.8b",
             prompt=MERGED_PRE_PROMPT.format(
                 categories=", ".join(CATEGORIES),
                 fact_cats="|".join(FACT_CATEGORIES),

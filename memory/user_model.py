@@ -137,8 +137,8 @@ class UserModel:
         """Deeper LLM-based extraction from the full exchange."""
         try:
             resp = ollama.generate(
-                model="llama3.2:3b",
-                prompt=EXTRACT_PROMPT.format(
+                model="qwen3.5:0.8b",
+                prompt="/no_think\n" + EXTRACT_PROMPT.format(
                     user_msg=user_message[:500],
                     assistant_msg=assistant_response[:300],
                 ),
@@ -344,8 +344,8 @@ class UserModel:
 
         try:
             resp = ollama.generate(
-                model="llama3.2:3b",
-                prompt=PERSONALISE_PROMPT.format(
+                model="qwen3.5:0.8b",
+                prompt="/no_think\n" + PERSONALISE_PROMPT.format(
                     user_context=user_context[:600],
                     user_message=user_message[:200],
                     response=response[:800],

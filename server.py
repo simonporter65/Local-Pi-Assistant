@@ -98,10 +98,10 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(180)
             try:
                 await asyncio.to_thread(
-                    ollama.generate, model="llama3.2:3b",
+                    ollama.generate, model="qwen3.5:0.8b",
                     prompt="hi", options={"num_predict": 1, "num_ctx": 64},
                 )
-                print("[KEEPALIVE] llama3.2:3b warmed", flush=True)
+                print("[KEEPALIVE] qwen3.5:0.8b warmed", flush=True)
             except Exception:
                 pass
             try:
@@ -119,12 +119,12 @@ async def lifespan(app: FastAPI):
     import ollama as _ollama
     try:
         await asyncio.to_thread(
-            _ollama.generate, model="llama3.2:3b",
+            _ollama.generate, model="qwen3.5:0.8b",
             prompt="hi", options={"num_predict": 1, "num_ctx": 64},
         )
-        print("[SERVER] Warmed llama3.2:3b", flush=True)
+        print("[SERVER] Warmed qwen3.5:0.8b", flush=True)
     except Exception as _e:
-        print(f"[SERVER] Could not warm llama3.2:3b: {_e}", flush=True)
+        print(f"[SERVER] Could not warm qwen3.5:0.8b: {_e}", flush=True)
     # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
             if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
                 resp = await asyncio.to_thread(
                     _ollama.generate,
-                    model="llama3.2:3b",
+                    model="qwen3.5:0.8b",
                     prompt=(
                         f"You are {name}. You know this about your user:\n{ctx}\n\n"
                         f"Write a warm 1-sentence greeting acknowledging what you remember. "
@@ -313,12 +313,13 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     # Notify UI immediately if any facts were extracted
     asyncio.create_task(broadcast({"type": "profile_updated"}))
 
-    route   = route_to_model(intent)
-    model   = route["model"]
-    latency = route.get("latency", "fast")
-    budget  = get_token_budget(latency, category)
+    route     = route_to_model(intent)
+    model     = route["model"]
+    latency   = route.get("latency", "fast")
+    thinking  = route.get("thinking", False)
+    budget    = get_token_budget(latency, category)
 
-    yield sse("model", name=model, latency=latency, category=category)
+    yield sse("model", name=model, latency=latency, category=category, thinking=thinking)
     await asyncio.sleep(0)
 
     rewritten = user_message
@@ -408,11 +409,16 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                               "file_management", "shell_command",
                               "screenshot_analysis", "image_description"}
     try:
-        async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id), use_skills=use_skills):
+        async for event_type, data in _run_model_streaming(
+            rewritten, model, system, budget,
+            _get_history(session_id),
+            use_skills=use_skills,
+            use_thinking=thinking,
+        ):
             if event_type == "token":
                 yield sse("token", text=data)
-            elif event_type == "think":
-                yield sse("thinking", text=data)
+            elif event_type in ("think", "think_token"):
+                yield sse("thinking_token", text=data)
             elif event_type == "skill":
                 yield sse("skill_call", skill=data.get("name", "?"), args=data.get("args", {}))
             elif event_type == "done":
@@ -498,25 +504,37 @@ async def _iter_stream(stream):
         await asyncio.sleep(0)  # yield control back to event loop between chunks
 
 
-async def _run_model_streaming(prompt, model, system, budget, history=None, use_skills=False):
-    """Streams tokens. Yields: ("token", text) | ("skill", ev) | ("think", text) | ("done", dict)"""
+async def _run_model_streaming(prompt, model, system, budget, history=None,
+                               use_skills=False, use_thinking=False):
+    """Stream tokens from the model.
+
+    Yields:
+      ("token",       text)   — content token to stream to user
+      ("think_token", text)   — thinking token (display as grey reasoning text)
+      ("skill",       dict)   — skill call to execute
+      ("done",        dict)   — final result {output, success, tool_calls, model}
+
+    use_thinking=True  → model reasons silently before answering (qwen3.5 thinking mode)
+    use_thinking=False → model answers directly (think=False kwarg suppresses CoT)
+    """
     import ollama, re
 
-    # Only add skill/final format instruction for categories that need it
+    # think=False must be a top-level kwarg, NOT inside options
+    think_kwargs = {} if use_thinking else {"think": False}
+
     if use_skills:
         user_content = f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"
     else:
         user_content = prompt
 
-    # Build messages with conversation history
     messages = list(history or [])
     if messages and messages[-1]["role"] == "user":
         messages[-1] = {"role": "user", "content": user_content}
     else:
         messages.append({"role": "user", "content": user_content})
-    skill_events, think_events = [], []
+
     tool_count = 0
-    stuck_count = 0   # consecutive non-tool, non-final, non-content iterations
+    stuck_count = 0
     last_reply = ""
     first_call = True
     token_buffer = ""
@@ -530,30 +548,31 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
                 options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
+                **think_kwargs,
             )
             collected = []
-            # For tool-using categories, buffer the start to detect SKILL:/FINAL: prefixes.
-            # For pure chat (no tools), stream immediately — no buffer needed.
+            # Direct chat: stream immediately. Skill-using categories: buffer to detect SKILL:/FINAL:
             streaming_started = not use_skills
             async for chunk in _iter_stream(stream):
-                token = chunk.get("message", {}).get("content", "")
+                msg = chunk.get("message", {})
+                # Thinking tokens — stream live as grey reasoning text
+                think_tok = msg.get("thinking") or ""
+                if think_tok:
+                    yield ("think_token", think_tok)
+                token = msg.get("content") or ""
                 if not token:
                     continue
                 collected.append(token)
                 token_buffer += token
                 if not streaming_started:
-                    # Buffer the start to detect SKILL:/FINAL: before streaming
                     if "FINAL:" in token_buffer:
-                        # Strip FINAL: prefix and stream the rest
                         token_buffer = token_buffer.split("FINAL:", 1)[1].lstrip()
                         streaming_started = True
                         if token_buffer:
                             yield ("token", token_buffer)
                     elif token_buffer.lstrip().startswith("SKILL:") or token_buffer.lstrip().startswith("{\""):
-                        # It's a tool call — don't stream the JSON, let post-stream logic handle it
-                        pass  # keep buffering silently
+                        pass  # tool call — buffer silently
                     elif len(token_buffer) > 40:
-                        # Long enough to confirm it's regular content — stream it
                         streaming_started = True
                         yield ("token", token_buffer)
                 else:
@@ -562,17 +581,18 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
         else:
             resp = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096},
+                **think_kwargs,
             )
-            raw = resp["message"]["content"]
+            raw = resp["message"].get("content") or ""
+            # Emit any thinking from non-streaming follow-up calls
+            think_text = resp["message"].get("thinking") or ""
+            if think_text:
+                yield ("think_token", think_text)
 
         last_reply = raw
-        think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
-        reply = raw
-        if think_m:
-            think_events.append(think_m.group(1).strip()[:400])
-            reply = raw.replace(think_m.group(0), "").strip()
-            yield ("think", think_m.group(1).strip()[:400])
+        # Strip any inline <think> blocks from legacy DeepSeek-style models
+        reply = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
         messages.append({"role": "assistant", "content": raw})
 
@@ -603,7 +623,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                             "tool_calls": tool_count, "model": model})
             return
 
-        # Model returned empty content — nudge it, but bail after 3 stuck iterations
+        # Model returned empty content — nudge, bail after 3 stuck iterations
         stuck_count += 1
         if stuck_count >= 3:
             yield ("done", {"output": "I'm sorry, I had trouble generating a response. Please try again.",

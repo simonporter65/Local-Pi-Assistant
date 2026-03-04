@@ -29,7 +29,7 @@ GAPS_TO_CHECK = [
     ("goals", "what they are trying to achieve"),
 ]
 
-def get_curiosity_question(name: str, user_model, ollama_model: str = "llama3.2:3b") -> str | None:
+def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen3.5:0.8b") -> str | None:
     """Returns a question to ask the user, or None if nothing needed."""
     import ollama
 
@@ -54,7 +54,7 @@ def get_curiosity_question(name: str, user_model, ollama_model: str = "llama3.2:
     try:
         resp = ollama.generate(
             model=ollama_model,
-            prompt=CURIOSITY_PROMPT.format(
+            prompt="/no_think\n" + CURIOSITY_PROMPT.format(
                 name=name,
                 known_facts=known_facts[:400],
                 gaps=gaps_str,
