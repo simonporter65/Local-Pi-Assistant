@@ -374,10 +374,11 @@ async function addTaskPrompt() {
 }
 
 // ─────────────────────────────────────────────
-// Init — connect event stream and poll tasks
+// Init — reuses the SSE connection in index.html connectEvents()
+// handleHeartbeatEvent() is called from there for heartbeat_* events
 // ─────────────────────────────────────────────
 function initHeartbeatUI() {
-  connectEvents();
+  // No new EventSource — we share the one opened in index.html init()
   loadTaskSummary();
   setInterval(loadTaskSummary, 60 * 1000);
 }
