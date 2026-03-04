@@ -24,14 +24,14 @@ def get_installed_models() -> list:
 # Category → preferred model + latency
 MODEL_MAP = {
     # Instant: classifier pipeline
-    "intent_classification":  {"model": "qwen3:0.6b",           "latency": "instant"},
-    "sentiment_analysis":     {"model": "qwen3:0.6b",           "latency": "instant"},
+    "intent_classification":  {"model": "qwen3:1.7b",           "latency": "instant"},
+    "sentiment_analysis":     {"model": "qwen3:1.7b",           "latency": "instant"},
 
-    # Fast: simple chat — qwen3:0.6b is 15x faster than llama3.2:3b on Pi5
-    "general_chat":           {"model": "qwen3:0.6b",          "latency": "fast"},
-    "summarization":          {"model": "qwen3:0.6b",          "latency": "fast"},
-    "task_management":        {"model": "qwen3:0.6b",          "latency": "fast"},
-    "translation":            {"model": "qwen3:0.6b",          "latency": "fast"},
+    # Fast: simple chat — qwen3:1.7b is 15x faster than llama3.2:3b on Pi5
+    "general_chat":           {"model": "qwen3:1.7b",          "latency": "fast"},
+    "summarization":          {"model": "qwen3:1.7b",          "latency": "fast"},
+    "task_management":        {"model": "qwen3:1.7b",          "latency": "fast"},
+    "translation":            {"model": "qwen3:1.7b",          "latency": "fast"},
 
     # Normal: capable 8B
     "web_search":             {"model": "llama3.1:8b",         "latency": "normal"},
@@ -57,7 +57,7 @@ MODEL_MAP = {
 
 # Fallback chains: if primary not installed or fails, try these in order
 FALLBACK_CHAINS = {
-    "qwen3:0.6b":          ["qwen3:1.7b",     "llama3.2:3b"],
+    "qwen3:1.7b":          ["llama3.1:8b",    "llama3.2:3b"],
     "qwen2.5-coder:7b":    ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
     "deepseek-r1:7b":      ["llama3.1:8b",    "mistral:7b",   "llama3.2:3b"],
     "llama3.1:8b":         ["mistral:7b",     "llama3.2:3b"],

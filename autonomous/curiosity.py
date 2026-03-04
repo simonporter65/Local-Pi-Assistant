@@ -29,7 +29,7 @@ GAPS_TO_CHECK = [
     ("goals", "what they are trying to achieve"),
 ]
 
-def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen3:0.6b") -> str | None:
+def get_curiosity_question(name: str, user_model, ollama_model: str = "qwen3:1.7b") -> str | None:
     """Returns a question to ask the user, or None if nothing needed."""
     import ollama
 

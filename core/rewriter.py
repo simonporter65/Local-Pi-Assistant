@@ -24,7 +24,7 @@ def rewrite_prompt(prompt: str, intent: dict) -> str:
 
     try:
         response = ollama.generate(
-            model="qwen3:0.6b",
+            model="qwen3:1.7b",
             prompt=REWRITE_PROMPT.format(category=category, prompt=prompt[:600]),
             options={
                 "temperature": 0.3,
