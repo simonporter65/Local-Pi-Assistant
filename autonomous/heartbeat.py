@@ -86,12 +86,14 @@ Pending tasks: {pending_count}
 Available skills: {skills}
 
 Rules:
-- Only suggest tasks using available skills (web_search, web_fetch, bash_exec, memory_search, workspace, system_info)
-- NEVER suggest ML training, model training, NLP pipelines, or pip install
+- ONLY use the available skills listed above — do not invent skills that don't exist
+- NEVER suggest ML training, model training, pip install, or any code that runs on the system
+- task_type MUST be one of: research, prepare, reflect, maintain
 - Focus on: researching topics the user cares about, checking system health, preparing useful info
 - 2-3 tasks maximum, use "low" or "idle" priority
+- Keep descriptions short and concrete
 
-Return JSON array ONLY:
+Return a JSON array ONLY — no explanation, no markdown, no code blocks:
 [{{"title": "...", "description": "...", "task_type": "research|prepare|reflect|maintain", "priority_name": "low|idle"}}]"""
 
 

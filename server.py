@@ -358,6 +358,28 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
         except Exception as e:
             print(f"[WEB SEARCH] Pre-execute failed: {e}", flush=True)
 
+    # For web_browsing with a simple URL: pre-fetch the page content.
+    # Faster and more reliable than relying on the model to emit SKILL: correctly.
+    if category == "web_browsing":
+        import re as _re
+        url_match = _re.search(r'https?://[^\s"\'<>]+', user_message)
+        if url_match:
+            found_url = url_match.group(0)
+            # Only pre-fetch if it looks like a read request, not interaction
+            interaction_words = {"click", "fill", "submit", "login", "sign", "type", "scroll"}
+            is_interaction = bool(set(user_message.lower().split()) & interaction_words)
+            if not is_interaction:
+                yield sse("stage", message="Fetching page...")
+                await asyncio.sleep(0)
+                try:
+                    page_content = await asyncio.to_thread(
+                        registry.run, "web_fetch", url=found_url, max_chars=4000
+                    )
+                    system = system + f"\n\nPAGE CONTENT from {found_url}:\n{str(page_content)[:4000]}\n\nAnswer based on this content."
+                    print(f"[WEB_FETCH] Pre-executed for: {found_url[:60]}", flush=True)
+                except Exception as e:
+                    print(f"[WEB_FETCH] Pre-execute failed: {e}", flush=True)
+
     # For image/screenshot tasks: pre-run vision skill if a file path is in the message
     if category in {"screenshot_analysis", "image_description"}:
         import re as _re
