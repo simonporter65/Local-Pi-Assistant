@@ -639,8 +639,15 @@ async def task_summary():
 
 @app.get("/profile")
 async def get_profile():
+    from autonomous.training_curator import get_training_status
     p = await asyncio.to_thread(user_model.get_display_profile)
     p["assistant_name"] = personality.name
+    try:
+        ts = await asyncio.to_thread(get_training_status, DB_PATH)
+        p["training_total"] = ts.get("total_exchanges", 0)
+        p["training_good"] = ts.get("good_quality", 0)
+    except Exception:
+        pass
     return p
 
 @app.get("/proactive")
