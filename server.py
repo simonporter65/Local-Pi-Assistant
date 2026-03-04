@@ -98,11 +98,10 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(180)
             try:
                 await asyncio.to_thread(
-                    ollama.generate, model="qwen3.5:0.8b",
+                    ollama.generate, model="llama3.2:3b",
                     prompt="hi", options={"num_predict": 1, "num_ctx": 64},
-                    think=False,
                 )
-                print("[KEEPALIVE] qwen3.5:0.8b warmed", flush=True)
+                print("[KEEPALIVE] llama3.2:3b warmed", flush=True)
             except Exception:
                 pass
             try:
@@ -120,13 +119,12 @@ async def lifespan(app: FastAPI):
     import ollama as _ollama
     try:
         await asyncio.to_thread(
-            _ollama.generate, model="qwen3.5:0.8b",
+            _ollama.generate, model="llama3.2:3b",
             prompt="hi", options={"num_predict": 1, "num_ctx": 64},
-            think=False,
         )
-        print("[SERVER] Warmed qwen3.5:0.8b", flush=True)
+        print("[SERVER] Warmed llama3.2:3b", flush=True)
     except Exception as _e:
-        print(f"[SERVER] Could not warm qwen3.5:0.8b: {_e}", flush=True)
+        print(f"[SERVER] Could not warm llama3.2:3b: {_e}", flush=True)
     # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
@@ -143,7 +141,7 @@ async def lifespan(app: FastAPI):
             if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
                 resp = await asyncio.to_thread(
                     _ollama.generate,
-                    model="qwen3.5:0.8b",
+                    model="llama3.2:3b",
                     prompt=(
                         f"You are {name}. You know this about your user:\n{ctx}\n\n"
                         f"Write a warm 1-sentence greeting acknowledging what you remember. "
