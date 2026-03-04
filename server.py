@@ -309,8 +309,8 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     category = intent.get("category", "general_chat")
     print(f"[CLASSIFY] {intent['_source']}: {category} for: {user_message[:50]}", flush=True)
 
-    # Get user context inline (fast — 30s cached DB read), fire everything else as background
-    user_ctx = user_model.get_context_for_prompt()
+    # Get user context — cached 30s DB read, run in thread to avoid blocking event loop
+    user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
     asyncio.create_task(asyncio.to_thread(training.score_previous_exchange, user_message, session_id))
     asyncio.create_task(asyncio.to_thread(user_model.extract_from_message, user_message))
     asyncio.create_task(broadcast({"type": "profile_updated"}))
@@ -351,11 +351,15 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
         yield sse("stage", message="Searching the web...")
         await asyncio.sleep(0)
         try:
-            search_results = await asyncio.to_thread(
-                registry.run, "web_search", query=rewritten, max_results=5
+            search_results = await asyncio.wait_for(
+                asyncio.to_thread(registry.run, "web_search", query=rewritten, max_results=5),
+                timeout=20.0,
             )
-            system = system + f"\n\nWEB SEARCH RESULTS for '{rewritten}':\n{search_results}\n\nSynthesize these results into a helpful, accurate response."
+            injected = str(search_results)[:6000]
+            system = system + f"\n\nWEB SEARCH RESULTS for '{rewritten}':\n{injected}\n\nSynthesize these results into a helpful, accurate response."
             print(f"[WEB SEARCH] Pre-executed for: {rewritten[:50]}", flush=True)
+        except asyncio.TimeoutError:
+            print("[WEB SEARCH] Pre-execute timed out after 20s", flush=True)
         except Exception as e:
             print(f"[WEB SEARCH] Pre-execute failed: {e}", flush=True)
 
@@ -373,11 +377,15 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                 yield sse("stage", message="Fetching page...")
                 await asyncio.sleep(0)
                 try:
-                    page_content = await asyncio.to_thread(
-                        registry.run, "web_fetch", url=found_url, max_chars=4000
+                    page_content = await asyncio.wait_for(
+                        asyncio.to_thread(registry.run, "web_fetch", url=found_url, max_chars=4000),
+                        timeout=20.0,
                     )
-                    system = system + f"\n\nPAGE CONTENT from {found_url}:\n{str(page_content)[:4000]}\n\nAnswer based on this content."
+                    injected = str(page_content)[:6000]
+                    system = system + f"\n\nPAGE CONTENT from {found_url}:\n{injected}\n\nAnswer based on this content."
                     print(f"[WEB_FETCH] Pre-executed for: {found_url[:60]}", flush=True)
+                except asyncio.TimeoutError:
+                    print(f"[WEB_FETCH] Pre-execute timed out after 20s for: {found_url[:60]}", flush=True)
                 except Exception as e:
                     print(f"[WEB_FETCH] Pre-execute failed: {e}", flush=True)
 
@@ -391,11 +399,15 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
             try:
                 img_path = img_match.group(1)
                 question = user_message.replace(img_path, "").strip() or "Describe what you see in detail."
-                vision_result = await asyncio.to_thread(
-                    registry.run, "vision", image_path=img_path, question=question
+                vision_result = await asyncio.wait_for(
+                    asyncio.to_thread(registry.run, "vision", image_path=img_path, question=question),
+                    timeout=30.0,
                 )
-                system = system + f"\n\nIMAGE ANALYSIS of {img_path}:\n{vision_result}\n\nAnswer based on this analysis."
+                injected = str(vision_result)[:6000]
+                system = system + f"\n\nIMAGE ANALYSIS of {img_path}:\n{injected}\n\nAnswer based on this analysis."
                 print(f"[VISION] Pre-executed for: {img_path}", flush=True)
+            except asyncio.TimeoutError:
+                print(f"[VISION] Pre-execute timed out after 30s for: {img_path}", flush=True)
             except Exception as e:
                 print(f"[VISION] Pre-execute failed: {e}", flush=True)
 

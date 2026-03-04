@@ -7,10 +7,13 @@ Supports semantic search via embeddings (nomic-embed-text).
 import sqlite3
 import json
 import os
-import threading
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from datetime import datetime
 from typing import Optional
+
+# Thread pool for background embedding — caps concurrent Ollama calls
+_embed_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
 
 DB_PATH = os.environ.get("AGENT_DB", "/mnt/nvme/agent/memory/agent.db")
 
@@ -69,6 +72,9 @@ class AgentMemory:
 
             CREATE INDEX IF NOT EXISTS idx_interactions_timestamp
                 ON interactions(timestamp);
+
+            CREATE INDEX IF NOT EXISTS idx_embeddings_interaction
+                ON embeddings(interaction_id);
         """)
         self.db.commit()
 
@@ -102,12 +108,8 @@ class AgentMemory:
         self.db.commit()
         interaction_id = cursor.lastrowid
 
-        # Embed in background — don't block log_interaction
-        threading.Thread(
-            target=self._embed_and_store,
-            args=(interaction_id, user_input + " " + output[:400]),
-            daemon=True,
-        ).start()
+        # Embed in background — pool caps concurrent Ollama calls at 2
+        _embed_executor.submit(self._embed_and_store, interaction_id, user_input + " " + output[:400])
 
         return interaction_id
 

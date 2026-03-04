@@ -8,6 +8,7 @@ import importlib.util
 import os
 import sys
 import json
+import threading
 import traceback
 
 
@@ -20,6 +21,7 @@ class SkillRegistry:
     def __init__(self, skills_dir: str = SKILLS_DIR):
         self.skills_dir = skills_dir
         self.skills: dict = {}
+        self._lock = threading.Lock()
         self._load_all()
 
     def _load_all(self):
@@ -47,21 +49,23 @@ class SkillRegistry:
 
     def reload(self):
         """Hot-reload all skills — call this after skill_writer creates a new skill."""
-        self.skills = {}
-        self._load_all()
+        with self._lock:
+            self.skills = {}
+            self._load_all()
 
     def run(self, skill_name: str, **kwargs) -> str:
-        # Try reloading if skill not found (might be newly written)
-        if skill_name not in self.skills:
-            self._load_skill(skill_name)
+        with self._lock:
+            # Try reloading if skill not found (might be newly written)
+            if skill_name not in self.skills:
+                self._load_skill(skill_name)
 
-        if skill_name not in self.skills:
-            available = ", ".join(self.skills.keys())
-            raise ValueError(
-                f"Skill '{skill_name}' not found. Available: {available}"
-            )
+            if skill_name not in self.skills:
+                available = ", ".join(self.skills.keys())
+                raise ValueError(
+                    f"Skill '{skill_name}' not found. Available: {available}"
+                )
 
-        return self.skills[skill_name].run(**kwargs)
+            return self.skills[skill_name].run(**kwargs)
 
     def list_skills(self) -> str:
         return json.dumps(

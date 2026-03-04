@@ -15,6 +15,7 @@ Key design:
 """
 
 import asyncio
+import enum
 import json
 import ollama
 import re
@@ -101,6 +102,12 @@ Return a JSON array ONLY — no explanation, no markdown, no code blocks:
 
 
 
+class _PauseState(enum.Enum):
+    ACTIVE    = "active"       # Running normally
+    COOLDOWN  = "cooldown"     # Waiting N seconds after user interaction
+    PAUSED    = "paused"       # Indefinitely paused (user is active)
+
+
 class HeartbeatLoop:
     def __init__(
         self,
@@ -119,8 +126,8 @@ class HeartbeatLoop:
         self.personality = personality
         self.db_path = task_queue.db_path if hasattr(task_queue, 'db_path') else None
 
-        self._paused = False
-        self._pause_until: Optional[float] = None
+        self._pause_state: _PauseState = _PauseState.ACTIVE
+        self._cooldown_until: float = 0.0
         self._running = False
         self._current_task_id: Optional[int] = None
         self._task_start_time: Optional[float] = None
@@ -131,24 +138,29 @@ class HeartbeatLoop:
     # ── Pause / resume (called by server on user messages) ───────────────
 
     def pause_for_user(self):
-        """Call this when user sends a message. Pauses background work."""
-        self._paused = True
-        self._pause_until = None  # Indefinite until resume_after_user()
+        """Call this when user sends a message. Pauses background work immediately."""
+        self._pause_state = _PauseState.PAUSED
+        self._cooldown_until = 0.0
         if self._current_task_id:
             self.queue.pause_running()
             self._current_task_id = None
         asyncio.create_task(self._notify("paused", "User active — background work paused"))
 
     def resume_after_user(self):
-        """Call this N seconds after user interaction completes."""
-        self._pause_until = time.time() + USER_PAUSE_COOLDOWN
-        self._paused = False
+        """Call this after user interaction completes. Enters cooldown before resuming."""
+        self._pause_state = _PauseState.COOLDOWN
+        self._cooldown_until = time.time() + USER_PAUSE_COOLDOWN
         asyncio.create_task(self._notify("resuming", f"Resuming background work in {USER_PAUSE_COOLDOWN}s..."))
 
     def is_paused(self) -> bool:
-        if self._pause_until and time.time() < self._pause_until:
+        if self._pause_state == _PauseState.PAUSED:
             return True
-        return self._paused
+        if self._pause_state == _PauseState.COOLDOWN:
+            if time.time() < self._cooldown_until:
+                return True
+            # Cooldown expired — transition back to active
+            self._pause_state = _PauseState.ACTIVE
+        return False
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
@@ -362,7 +374,6 @@ class HeartbeatLoop:
         tool_count = 0
         max_tools = 12
         last_reply = ""
-        thinking_log = []
 
         while tool_count < max_tools:
             # Check for pause between tool calls
@@ -408,13 +419,7 @@ class HeartbeatLoop:
                 }
             raw = "".join(tokens)
             last_reply = raw
-
-            # DeepSeek think blocks
-            think_match = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
             reply = raw
-            if think_match:
-                thinking_log.append(think_match.group(1).strip())
-                reply = raw.replace(think_match.group(0), "").strip()
 
             messages.append({"role": "assistant", "content": raw})
 
@@ -437,7 +442,6 @@ class HeartbeatLoop:
                 return {
                     "output": final_match.group(1).strip(),
                     "new_tasks": new_tasks,
-                    "thinking": thinking_log,
                 }
 
             # SKILL call

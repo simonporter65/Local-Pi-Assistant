@@ -276,10 +276,6 @@ class TaskQueue:
         )
         self.db.commit()
 
-    def resume_paused(self):
-        """No-op — paused tasks automatically become pending again."""
-        pass
-
     def pending_count(self) -> int:
         return self.db.execute(
             "SELECT COUNT(*) FROM tasks WHERE status='pending'"
@@ -307,9 +303,10 @@ class TaskQueue:
     def summary(self) -> dict:
         counts = {}
         for status in ("pending", "running", "done", "failed", "cancelled"):
-            counts[status] = self.db.execute(
+            row = self.db.execute(
                 "SELECT COUNT(*) FROM tasks WHERE status=?", (status,)
-            ).fetchone()[0]
+            ).fetchone()
+            counts[status] = row[0] if row else 0
         return counts
 
     def _log(self, task_id: int, event: str, detail: str = ""):

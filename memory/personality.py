@@ -112,6 +112,11 @@ class PersonalityConfig:
     def flavor(self) -> dict:
         return self._config.get("flavors", DEFAULT_PERSONALITY["flavors"])
 
+    @staticmethod
+    def _skills_section(skills_list: str) -> str:
+        """Format the AVAILABLE SKILLS block, or empty string if no skills."""
+        return f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""
+
     def get_full_system_prompt(
         self,
         model: str,
@@ -142,8 +147,7 @@ class PersonalityConfig:
                             "file_management", "shell_command",
                             "screenshot_analysis", "image_description"}
         if category in skill_categories:
-            skills_section = f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""
-            format_str = f'''{skills_section}SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
+            format_str = f'''{self._skills_section(skills_list)}SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
 FINAL FORMAT: FINAL: <your complete response>
 Use SKILL to call a tool, then wait for result. Use FINAL when done.'''
         else:
@@ -168,8 +172,6 @@ Remember: you are {name}. Never break character. Never say "As an AI."
 """
 
     def get_background_system_prompt(self, user_context: str, skills_list: str = "") -> str:
-        name = self.name or "Assistant"
-        skills_section = f"\nAVAILABLE SKILLS:\n{skills_list}\n" if skills_list else ""
         return f"""{self.personality_prompt}
 
 You are running a background task. The user is not watching.
@@ -177,7 +179,7 @@ Do real work. Use skills. Be thorough.
 
 USER CONTEXT:
 {user_context}
-{skills_section}
+{self._skills_section(skills_list)}
 SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
 FINAL FORMAT: FINAL: <summary of what you did>
 NEW_TASKS: [{{"title":"...","description":"...","task_type":"...","priority_name":"..."}}]
