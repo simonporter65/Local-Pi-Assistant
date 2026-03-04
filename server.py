@@ -535,15 +535,17 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                 **extra
             )
             collected = []
-            streaming_started = False
+            # For tool-using categories, buffer the start to detect SKILL:/FINAL: prefixes.
+            # For pure chat (no tools), stream immediately — no buffer needed.
+            streaming_started = not use_skills
             async for chunk in _iter_stream(stream):
                 token = chunk.get("message", {}).get("content", "")
                 if not token:
                     continue
                 collected.append(token)
                 token_buffer += token
-                # Buffer the start to detect SKILL:/FINAL: before streaming
                 if not streaming_started:
+                    # Buffer the start to detect SKILL:/FINAL: before streaming
                     if "FINAL:" in token_buffer:
                         # Strip FINAL: prefix and stream the rest
                         token_buffer = token_buffer.split("FINAL:", 1)[1].lstrip()
