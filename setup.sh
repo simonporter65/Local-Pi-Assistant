@@ -143,6 +143,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable assistant-xvfb assistant
 echo "✓ Systemd services installed"
 
+# ── Arc service drop-in: clear RAM + swap on restart ──────────────────────────
+sudo mkdir -p /etc/systemd/system/arc.service.d
+sudo cp "$SCRIPT_DIR/systemd/arc-clear-cache.conf" /etc/systemd/system/arc.service.d/clear-cache.conf
+sudo systemctl daemon-reload
+echo "✓ Arc restart clears RAM + swap"
+
 # ── Network access info ───────────────────────────────
 LOCAL_IP=$(hostname -I | awk '{print $1}')
 echo ""
