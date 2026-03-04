@@ -477,9 +477,14 @@ class HeartbeatLoop:
                 for t in completed
             ]) or "None yet."
 
+            # Use llama3.1:8b for reflection — it follows JSON output instructions
+            # reliably. qwen3.5:0.8b only produces thinking tokens (no visible output).
+            # llama3.2:1b generates prose instead of JSON.
+            # Reflection only runs when queue is empty (~once per 5 min), so RAM is fine.
+            REFLECT_MODEL = "llama3.1:8b"
             resp = await asyncio.to_thread(
                 ollama.generate,
-                model=BACKGROUND_MODEL,
+                model=REFLECT_MODEL,
                 prompt=REFLECT_PROMPT.format(
                     completed_tasks=completed_summary,
                     user_context=user_context,
@@ -490,8 +495,10 @@ class HeartbeatLoop:
             )
 
             text = resp["response"].strip()
+            print(f"[HEARTBEAT] Reflection raw ({len(text)}): {text[:200]}")
             match = re.search(r"\[.*\]", text, re.DOTALL)
             if not match:
+                print(f"[HEARTBEAT] Reflection: no JSON array found in response")
                 return
 
             # Use raw_decode to safely parse just the first valid JSON structure
