@@ -93,10 +93,9 @@ async def lifespan(app: FastAPI):
     # Keep key models warm — ping every 3 minutes to prevent eviction
     async def _keepalive():
         import ollama
-        _warm_models = ["llama3.2:3b", "qwen2.5:0.5b", "nomic-embed-text"]
         while True:
             await asyncio.sleep(180)
-            for mdl in _warm_models:
+            for mdl in ["llama3.2:3b", "qwen2.5:0.5b"]:
                 try:
                     await asyncio.to_thread(
                         ollama.generate, model=mdl,
@@ -105,35 +104,44 @@ async def lifespan(app: FastAPI):
                     print(f"[KEEPALIVE] {mdl} warmed", flush=True)
                 except Exception:
                     pass
+            try:
+                await asyncio.to_thread(ollama.embeddings, model="nomic-embed-text", prompt="hi")
+                print("[KEEPALIVE] nomic-embed-text warmed", flush=True)
+            except Exception:
+                pass
     asyncio.create_task(_keepalive(), name="keepalive")
-
-    # Pre-warm embedding model so it's ready for memory search
-    async def _prewarm():
-        try:
-            import ollama
-            await asyncio.to_thread(
-                ollama.generate, model="nomic-embed-text",
-                prompt="warmup", options={"num_predict": 1}
-            )
-            print("[SERVER] Embed model warmed")
-        except Exception:
-            pass
-    asyncio.create_task(_prewarm())
 
     # Pre-warm the model route cache so first request doesn't subprocess
     from core.router import get_installed_models
     await asyncio.to_thread(get_installed_models)
 
+    # Warm key models before announcing readiness — first message will be instant
+    import ollama as _ollama
+    for _mdl in ["llama3.2:3b", "qwen2.5:0.5b"]:
+        try:
+            await asyncio.to_thread(
+                _ollama.generate, model=_mdl,
+                prompt="hi", options={"num_predict": 1, "num_ctx": 64}
+            )
+            print(f"[SERVER] Warmed {_mdl}", flush=True)
+        except Exception as _e:
+            print(f"[SERVER] Could not warm {_mdl}: {_e}", flush=True)
+    # nomic-embed-text uses the embeddings API, not generate
+    try:
+        await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
+        print("[SERVER] Warmed nomic-embed-text", flush=True)
+    except Exception as _e:
+        print(f"[SERVER] Could not warm nomic-embed-text: {_e}", flush=True)
+
     name = personality.name or "Assistant"
 
-    # Generate startup greeting that acknowledges what ARC already knows
+    # Startup greeting — model is already loaded so this is fast
     async def _startup_greeting():
         try:
-            import ollama
             ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
             if ctx and "nothing yet" not in ctx.lower() and len(ctx) > 20:
                 resp = await asyncio.to_thread(
-                    ollama.generate,
+                    _ollama.generate,
                     model="llama3.2:3b",
                     prompt=(
                         f"You are {name}. You know this about your user:\n{ctx}\n\n"
