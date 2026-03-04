@@ -28,16 +28,16 @@ from autonomous.training_curator import curate_training_data, should_ask_opt_in,
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HEARTBEAT_INTERVAL   = 5 * 60   # Check queue every 5 minutes
+HEARTBEAT_INTERVAL   = 15 * 60  # Check queue every 15 minutes (was 5 — reduced for thermal)
 USER_PAUSE_COOLDOWN  = 30       # Wait 30s after user interaction before resuming
 MAX_TASK_DURATION    = 10 * 60  # Kill a task after 10 minutes
-BACKGROUND_MODEL          = "qwen3.5:2b"    # Background tasks — MUST differ from chat model (0.8b)
-                                             # so they get separate Ollama slots and don't block chat
+BACKGROUND_MODEL          = "qwen3.5:0.8b"  # Background tasks — fast & low-power (6.3 T/s)
+                                              # 0.8b finishes much quicker than 2b, less thermal load
 CURIOSITY_INTERVAL        = 10              # Ask a curiosity question every N heartbeat cycles
-BACKGROUND_MODEL_FALLBACK = "qwen3:4b"     # Fallback if 2b unavailable
+BACKGROUND_MODEL_FALLBACK = "qwen3.5:2b"   # Fallback if 0.8b unavailable
 
-# Token budget for background tasks — don't be greedy
-BACKGROUND_TOKEN_BUDGET = 800
+# Token budget for background tasks — keep it lean to reduce generation time / heat
+BACKGROUND_TOKEN_BUDGET = 400
 
 TASK_EXECUTION_PROMPT = """You are an autonomous background agent working on a task.
 You are running silently — the user is NOT watching this interaction.
@@ -395,7 +395,7 @@ class HeartbeatLoop:
                 if "out of memory" in str(e).lower():
                     tokens, aborted = await asyncio.to_thread(
                         _chat_stream_sync, BACKGROUND_MODEL_FALLBACK,
-                        {"temperature": 0.6, "num_predict": 800, "num_ctx": 4096}
+                        {"temperature": 0.6, "num_predict": 400, "num_ctx": 2048}
                     )
                 else:
                     raise
@@ -495,8 +495,8 @@ class HeartbeatLoop:
                 for t in completed
             ]) or "None yet."
 
-            # qwen3.5:2b with think=False for JSON generation — direct mode is reliable
-            REFLECT_MODEL = "qwen3.5:2b"
+            # qwen3.5:0.8b with /no_think prefix — fast JSON generation, low thermal load
+            REFLECT_MODEL = "qwen3.5:0.8b"
             # /no_think prefix suppresses Qwen3.5 reasoning for clean JSON output
             reflect_prompt = "/no_think\n" + REFLECT_PROMPT.format(
                 completed_tasks=completed_summary,
@@ -508,7 +508,7 @@ class HeartbeatLoop:
                 """Run in thread: stream ollama.generate, abort if paused."""
                 s = ollama.generate(
                     model=REFLECT_MODEL, prompt=reflect_prompt, stream=True,
-                    options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000},
+                    options={"temperature": 0.7, "num_predict": 400, "num_ctx": 2048},
                 )
                 toks = []
                 for chunk in s:
