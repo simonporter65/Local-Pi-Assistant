@@ -513,6 +513,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
         messages.append({"role": "user", "content": user_content})
     skill_events, think_events = [], []
     tool_count = 0
+    stuck_count = 0   # consecutive non-tool, non-final, non-content iterations
     last_reply = ""
     first_call = True
     token_buffer = ""
@@ -600,6 +601,12 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                             "tool_calls": tool_count, "model": model})
             return
 
+        # Model returned empty content — nudge it, but bail after 3 stuck iterations
+        stuck_count += 1
+        if stuck_count >= 3:
+            yield ("done", {"output": "I'm sorry, I had trouble generating a response. Please try again.",
+                            "success": False, "tool_calls": tool_count, "model": model})
+            return
         messages.append({"role": "user", "content": "Continue. SKILL: or FINAL: required."})
 
     yield ("done", {"output": last_reply.strip() or "Something went wrong — please try again.",
