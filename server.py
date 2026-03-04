@@ -25,7 +25,6 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.pipeline_pre import run_pre_pipeline
 from core.fast_classifier import fast_classify
 from core.router import route_to_model, get_fallback
 from core.token_budget import get_token_budget
@@ -67,7 +66,7 @@ training:    TrainingCollector = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, memory, user_model, personality, proactive, task_queue, heartbeat, training, training
+    global registry, memory, user_model, personality, proactive, task_queue, heartbeat, training
 
     os.makedirs(f"{AGENT_HOME}/memory",      exist_ok=True)
     os.makedirs(f"{AGENT_HOME}/workspace",   exist_ok=True)
@@ -279,14 +278,9 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     # Track conversation
     _add_to_history(session_id, "user", user_message)
 
-    # Fast heuristic first — only call 0.5b if ambiguous
     intent = fast_classify(user_message)
-    if intent is None:
-        print(f"[CLASSIFY] Falling back to 0.5b for: {user_message[:50]}", flush=True)
-        intent = await asyncio.to_thread(run_pre_pipeline, user_message)
-    else:
-        print(f"[CLASSIFY] Fast: {intent['category']} for: {user_message[:50]}", flush=True)
     category = intent.get("category", "general_chat")
+    print(f"[CLASSIFY] {intent['_source']}: {category} for: {user_message[:50]}", flush=True)
 
     await asyncio.sleep(0)
 
@@ -297,9 +291,6 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     model   = route["model"]
     latency = route.get("latency", "fast")
     budget  = get_token_budget(latency, category)
-
-    # quick_ack disabled — 0.5b too unreliable for short prompts
-    ack_task = None
 
     rewritten = user_message
     # Only search memory if message references past context
@@ -317,7 +308,19 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
 
     system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx)
 
-    # quick_ack disabled
+    # For web_search: pre-execute the search and inject results directly.
+    # More reliable than hoping the model emits the SKILL: format.
+    if category == "web_search":
+        yield sse("stage", message="Searching the web...")
+        await asyncio.sleep(0)
+        try:
+            search_results = await asyncio.to_thread(
+                registry.run, "web_search", query=rewritten, max_results=5
+            )
+            system = system + f"\n\nWEB SEARCH RESULTS for '{rewritten}':\n{search_results}\n\nSynthesize these results into a helpful, accurate response."
+            print(f"[WEB SEARCH] Pre-executed for: {rewritten[:50]}", flush=True)
+        except Exception as e:
+            print(f"[WEB SEARCH] Pre-execute failed: {e}", flush=True)
 
     yield sse("stage", message=f"{name} is thinking...")
     await asyncio.sleep(0)
@@ -325,7 +328,8 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     final = "Something went wrong — please try again."
     result = None
 
-    use_skills = category in {"web_search", "research", "coding", "debugging", "planning",
+    # Use skills for agentic categories (not web_search — handled above)
+    use_skills = category in {"research", "coding", "debugging",
                               "agentic_task", "data_analysis", "file_management", "shell_command"}
     try:
         async for event_type, data in _run_model_streaming(rewritten, model, system, budget, _get_history(session_id), use_skills=use_skills):
@@ -364,6 +368,7 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     # Only extract from exchange if response was successful
     if final and "went wrong" not in final:
         await asyncio.to_thread(user_model.extract_from_exchange, user_message, final)
+        await broadcast({"type": "profile_updated"})
         # Record for LoRA training data collection
         sys_prompt = personality.get_full_system_prompt(model, category, "", "")
         await asyncio.to_thread(
@@ -393,28 +398,6 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
             )
 
     heartbeat.resume_after_user()
-
-
-
-async def _quick_ack(user_message: str, name: str) -> str:
-    """Generate a fast 1-2 sentence acknowledgement using 0.5b model."""
-    import ollama
-    try:
-        resp = await asyncio.to_thread(
-            ollama.generate,
-            model="qwen2.5:0.5b",
-            prompt=(
-                f"Reply in one short sentence (max 12 words) acknowledging: {user_message[:100]}\n"
-                f"Be warm and natural. Example: 'On it!' or 'Let me check that for you.'"
-            ),
-            options={"temperature": 0.7, "num_predict": 30, "num_ctx": 512}
-        )
-        ack = resp["response"].strip()
-        if len(ack) > 120 or len(ack) < 5:
-            return ""
-        return ack
-    except Exception:
-        return ""
 
 
 async def _iter_stream(stream):
@@ -454,7 +437,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
             stream = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
                 stream=True,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
             )
             collected = []
             streaming_started = False
@@ -482,7 +465,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
         else:
             resp = await asyncio.to_thread(
                 ollama.chat, model=model, messages=msgs_with_system,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
+                options={"temperature": 0.7, "num_predict": budget, "num_ctx": 4096}
             )
             raw = resp["message"]["content"]
 
@@ -526,88 +509,6 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
 
     yield ("done", {"output": last_reply.strip() or "Something went wrong — please try again.",
                     "success": bool(last_reply.strip()), "tool_calls": tool_count, "model": model})
-
-async def _run_model(prompt, model, system, budget, history=None):
-    """Non-streaming fallback. Used if streaming fails."""
-    import ollama, re
-
-    messages = list(history or [])
-    if messages and messages[-1]["role"] == "user":
-        messages[-1] = {"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"}
-    else:
-        messages.append({"role": "user", "content": f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"})
-
-    msgs_with_system = [{"role": "system", "content": system}] + messages
-    skill_events, think_events = [], []
-    tool_count = 0
-    last_reply = ""
-
-    while tool_count < 20:
-        resp = await asyncio.to_thread(
-            ollama.chat, model=model, messages=msgs_with_system,
-            options={"temperature": 0.7, "num_predict": budget, "num_ctx": 2048}
-        )
-        raw = resp["message"]["content"]
-        last_reply = raw
-
-        think_m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
-        reply = raw
-        if think_m:
-            think_events.append(think_m.group(1).strip()[:400])
-            reply = raw.replace(think_m.group(0), "").strip()
-
-        messages.append({"role": "assistant", "content": raw})
-
-        final_m = re.search(r"FINAL:[\s\n]*(.*)", reply, re.DOTALL)
-        if final_m:
-            return (
-                {"output": final_m.group(1).strip(), "success": True,
-                 "tool_calls": tool_count, "model": model},
-                skill_events, think_events,
-            )
-
-        skill_m = re.search(r"SKILL:\s*(\{.*?\})", reply, re.DOTALL)
-        if skill_m:
-            try:
-                sc = json.loads(skill_m.group(1))
-                skill_events.append(sc)
-                res = await asyncio.to_thread(registry.run, sc["name"], **sc.get("args", {}))
-                res_str = str(res)
-                if len(res_str) > 6000:
-                    res_str = res_str[:5700] + "...[truncated]"
-                messages.append({"role": "user",
-                                 "content": f"Skill result:\n{res_str}\n\nContinue."})
-                tool_count += 1
-                continue
-            except Exception as e:
-                messages.append({"role": "user",
-                                 "content": f"Skill error: {e}. Try another."})
-                tool_count += 1
-                continue
-
-        # Model gave plain response — accept it directly
-        if last_reply.strip():
-            return (
-                {"output": last_reply.strip(), "success": True,
-                 "tool_calls": tool_count, "model": model},
-                skill_events, think_events,
-            )
-        messages.append({"role": "user",
-                         "content": "Continue. SKILL: or FINAL: required."})
-
-    # Accept plain response if model didn't use FINAL: format
-    if last_reply.strip():
-        return (
-            {"output": last_reply.strip(), "success": True,
-             "tool_calls": tool_count, "model": model},
-            skill_events, think_events,
-        )
-    return (
-        {"output": last_reply.strip(), "success": False,
-         "tool_calls": tool_count, "model": model},
-        skill_events, think_events,
-    )
-
 
 # ── Task queue API ────────────────────────────────────────────────────────────
 

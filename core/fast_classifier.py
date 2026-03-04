@@ -1,32 +1,55 @@
 """
 core/fast_classifier.py — Sub-millisecond heuristic classifier.
-Falls back to 0.5b only for truly ambiguous messages.
+Falls back to general_chat for ambiguous messages rather than mis-routing.
 """
 import re
 
-CODING_WORDS = {"code", "function", "bug", "error", "python", "javascript", "script",
-                "debug", "class", "import", "syntax", "compile", "programming", "html",
-                "css", "sql", "bash", "terminal", "git", "api", "json", "xml"}
+# Specific programming languages and tools — rarely ambiguous
+CODING_WORDS = {
+    "python", "javascript", "typescript", "golang", "rust", "kotlin",
+    "dockerfile", "kubernetes", "terraform", "webpack", "pytest",
+    "async", "await", "recursion", "algorithm", "refactor",
+    "middleware", "endpoint", "webhook", "api", "json", "yaml",
+    "regex", "stdlib", "virtualenv", "dependencies",
+}
 
-SEARCH_WORDS = {"search", "look up", "google", "latest", "news", "current", "price",
-                "weather", "stock", "define", "meaning", "translate"}
+# Code syntax phrases — unambiguous
+CODING_PHRASES = [
+    "def ", "class ", "import ", "function(", "() =>", "```",
+    "#!/", "syntax error", "stack trace", "null pointer",
+    "undefined is not", "cannot read property", "index out of range",
+    "traceback (most recent", "keyerror", "typeerror", "valueerror",
+    "npm install", "pip install", "git clone", "git commit",
+]
 
-TASK_WORDS = {"create", "make", "build", "generate", "plan", "schedule",
-              "remind", "task", "todo", "draft", "summarize", "analyse", "analyze"}
+SEARCH_WORDS = {
+    "search", "google", "latest", "news", "current", "price",
+    "weather", "stock", "define", "meaning", "translate",
+    "who is", "what is", "when did", "where is",
+}
 
-MATH_WORDS = {"calculate", "solve", "equation", "math", "formula", "compute", "integral",
-              "derivative", "probability", "statistics"}
+TASK_WORDS = {
+    "create", "build", "generate", "plan", "schedule",
+    "remind", "task", "todo", "draft", "summarize", "analyse", "analyze",
+}
 
-CREATIVE_WORDS = {"story", "poem", "write me", "creative", "fiction", "imagine", "invent"}
+MATH_WORDS = {
+    "calculate", "solve", "equation", "formula", "compute", "integral",
+    "derivative", "probability", "statistics", "percentage", "convert",
+}
 
-# Phrases that are always conversational — never need 0.5b
+CREATIVE_WORDS = {"poem", "story", "fiction", "imagine", "invent", "creative"}
+
+# Messages that are conversational — skip expensive routing
 CHAT_PHRASES = [
-    "do you", "can you", "you ", "your ", "remember", "know about", "about me",
+    "do you", "can you", "you ", "your ", "remember", "know about",
     "my name", "who am", "where do i", "what do i", "i live", "i am", "i'm",
     "pretty good", "not bad", "doing well", "how are", "still there", "you there",
     "what city", "what state", "what country", "tell me", "do you know",
     "what do you", "have you", "are you", "were you", "did you",
+    "about me", "i work", "i like", "i love", "i hate", "i use",
 ]
+
 
 def fast_classify(message: str) -> dict:
     msg = message.lower().strip()
@@ -38,14 +61,18 @@ def fast_classify(message: str) -> dict:
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
-    # Very short messages are always general chat
+    # Very short messages are conversational
     if len(msg) < 30 and not words & (CODING_WORDS | MATH_WORDS | SEARCH_WORDS):
         return {"category": "general_chat", "confidence": 0.95,
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
-    if words & CODING_WORDS:
-        return {"category": "coding", "confidence": 0.9,
+    # Coding — require explicit language names OR actual code syntax phrases
+    if words & CODING_WORDS or any(p in msg for p in CODING_PHRASES):
+        cat = "debugging" if any(p in msg for p in [
+            "error", "bug", "fix", "broken", "crash", "fail", "traceback", "exception"
+        ]) else "coding"
+        return {"category": cat, "confidence": 0.9,
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
@@ -55,12 +82,12 @@ def fast_classify(message: str) -> dict:
                 "facts": [], "_source": "heuristic"}
 
     if words & SEARCH_WORDS:
-        return {"category": "web_search", "confidence": 0.8,
+        return {"category": "web_search", "confidence": 0.85,
                 "needs_tools": True, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
     if words & TASK_WORDS:
-        return {"category": "planning", "confidence": 0.85,
+        return {"category": "planning", "confidence": 0.8,
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
@@ -69,7 +96,6 @@ def fast_classify(message: str) -> dict:
                 "needs_tools": False, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
-    # Default to general_chat rather than falling back to 0.5b
     return {"category": "general_chat", "confidence": 0.7,
             "needs_tools": False, "rewritten": message,
             "facts": [], "_source": "heuristic_default"}

@@ -827,6 +827,8 @@ function hideTyping() {
 // Send message
 // ─────────────────────────────────────────────
 async function sendMessage() {
+  if (isProcessing) return;
+
   const input = document.getElementById('messageInput');
   const text = input.value.trim();
   if (!text) return;
@@ -840,10 +842,12 @@ async function sendMessage() {
   streamingText = '';
   quickAckEl = null;
   isProcessing = true;
+  document.getElementById('sendBtn').disabled = true;
   currentStageEl = null;
   // Safety net — always unlock after 3 minutes max
   setTimeout(() => {
     isProcessing = false;
+    document.getElementById('sendBtn').disabled = false;
     }, 180000);
 
   appendMessage('user', text);
@@ -887,8 +891,8 @@ async function sendMessage() {
   }
 
   isProcessing = false;
+  document.getElementById('sendBtn').disabled = false;
   hideTyping();
-  loadProfile();
 }
 
 // ─────────────────────────────────────────────
@@ -988,12 +992,16 @@ function handleStreamEvent(event, stageEl) {
       streamingBubbleRow = null;
       streamingText = '';
       isProcessing = false;
-          document.getElementById('messageInput').focus();
-      console.log('[UI] final received, input unlocked');
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('messageInput').focus();
       break;
 
     case 'proactive':
       appendMessage('agent', event.message, 'proactive');
+      break;
+
+    case 'profile_updated':
+      loadProfile();
       break;
 
     case 'error':
@@ -1068,14 +1076,6 @@ function clearChat() {
 document.getElementById('messageInput').addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 140) + 'px';
-});
-
-// Monitor button disabled state
-const _btn = document.getElementById('sendBtn');
-const _origDescriptor = Object.getOwnPropertyDescriptor(HTMLButtonElement.prototype, 'disabled');
-Object.defineProperty(_btn, 'disabled', {
-  get() { return _origDescriptor.get.call(this); },
-  set(v) { console.log('[BTN] disabled =', v, new Error().stack.split('\n')[2]); _origDescriptor.set.call(this, v); }
 });
 
 document.getElementById('sendBtn').addEventListener('click', function(e) {
