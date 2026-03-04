@@ -996,6 +996,17 @@ function handleStreamEvent(event, stageEl) {
       if (currentStageEl) { removeElement(currentStageEl); currentStageEl = null; }
       break;
 
+    case 'model': {
+      // Show which model is responding in the status bar briefly
+      const shortName = (event.name || '').split(':')[0].replace('llama', 'llama').replace('qwen', 'qwen');
+      const sub = document.getElementById('headerSub');
+      if (sub) {
+        sub.textContent = `${shortName} · ${event.category || ''}`;
+        setTimeout(() => { sub.textContent = 'Always private. Always local.'; }, 8000);
+      }
+      break;
+    }
+
     case 'skill_call':
       // Silently log skill calls — don't show raw JSON to user
       console.log('[SKILL]', event.skill, event.args);
