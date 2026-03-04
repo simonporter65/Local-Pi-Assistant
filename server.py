@@ -651,6 +651,43 @@ async def get_profile():
         pass
     return p
 
+@app.post("/lora/opt-in")
+async def lora_opt_in(action: str = "yes"):
+    """User responds to LoRA training opt-in."""
+    import sqlite3
+    from datetime import date, timedelta
+    db = sqlite3.connect(DB_PATH)
+    try:
+        if action == "yes":
+            db.execute(
+                "INSERT OR REPLACE INTO training_meta (key, value) VALUES ('lora_opted_in', '1')"
+            )
+            db.commit()
+            # Queue a training task
+            task_queue.add(
+                title="LoRA fine-tuning: prepare adapter",
+                description=(
+                    "The user has opted in to on-device LoRA fine-tuning. "
+                    "Prepare the training run: verify training data at /mnt/nvme/lora/training_data.jsonl, "
+                    "check available tools, and summarise what is needed."
+                ),
+                task_type="prepare",
+                priority_name="low",
+            )
+            return {"ok": True, "message": "LoRA training scheduled."}
+        else:
+            # Snooze for 30 days
+            ask_after = str(date.today() + timedelta(days=30))
+            db.execute(
+                "INSERT OR REPLACE INTO training_meta (key, value) VALUES ('lora_ask_after', ?)",
+                (ask_after,)
+            )
+            db.commit()
+            return {"ok": True, "message": "Snoozed for 30 days."}
+    finally:
+        db.close()
+
+
 @app.get("/proactive")
 async def get_proactive():
     return {"suggestions": await asyncio.to_thread(proactive.get_sidebar_suggestions)}

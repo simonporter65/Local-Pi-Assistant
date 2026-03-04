@@ -99,8 +99,36 @@ function handleHeartbeatEvent(event) {
       break;
 
     case 'lora_opt_in':
-      // LoRA training opt-in — show as an important agent message
-      if (event.message) appendMessage('agent', event.message, 'proactive');
+      // LoRA training opt-in — show with Yes/No action buttons
+      if (event.message) {
+        const wrap = appendMessage('agent', event.message, 'proactive');
+        if (wrap) {
+          // Find the proactive-bubble inside the wrap to add buttons
+          const pb = wrap.querySelector('.proactive-bubble') || wrap;
+          const btns = document.createElement('div');
+          btns.style.cssText = 'margin-top:10px;display:flex;gap:8px;';
+          const yes = document.createElement('button');
+          yes.textContent = 'Yes, train tonight';
+          yes.style.cssText = 'padding:6px 14px;border-radius:8px;background:#4f8ef7;color:#fff;border:none;cursor:pointer;font-size:13px;';
+          const no = document.createElement('button');
+          no.textContent = 'Not now';
+          no.style.cssText = 'padding:6px 14px;border-radius:8px;background:#444;color:#ccc;border:none;cursor:pointer;font-size:13px;';
+          yes.addEventListener('click', async () => {
+            btns.remove();
+            const r = await fetch('/lora/opt-in?action=yes', {method:'POST'});
+            const d = await r.json();
+            appendMessage('agent', '✓ ' + (d.message || 'LoRA training scheduled.'), 'proactive');
+          });
+          no.addEventListener('click', async () => {
+            btns.remove();
+            await fetch('/lora/opt-in?action=no', {method:'POST'});
+            appendMessage('agent', "No problem — I'll ask again in a few weeks.", 'proactive');
+          });
+          btns.appendChild(yes);
+          btns.appendChild(no);
+          pb.appendChild(btns);
+        }
+      }
       break;
 
     case 'heartbeat_training':
