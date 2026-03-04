@@ -235,9 +235,31 @@ class HeartbeatLoop:
 
     # ── Task execution ────────────────────────────────────────────────────
 
+    # Keywords that signal a task requires live user interaction — background agent can't handle these
+    _INTERACTION_KEYWORDS = (
+        "ask user", "ask the user", "gather information from user",
+        "gather more information", "interact with user", "user profile update",
+        "request user", "prompt user", "wait for user",
+    )
+
     async def _execute_task(self, task: dict):
         task_id = task["id"]
         title = task["title"]
+
+        # Guard: curiosity tasks are questions for the user — broadcast and mark done
+        if task.get("task_type") == "curiosity":
+            question = task.get("description") or title
+            await self._notify("heartbeat_curiosity", f"💬 {question}")
+            await asyncio.to_thread(self.queue.complete, task_id, "Broadcast as curiosity question")
+            return
+
+        # Guard: tasks that require live user interaction can't be done by the background agent
+        combined = (title + " " + task.get("description", "")).lower()
+        if any(kw in combined for kw in self._INTERACTION_KEYWORDS):
+            reason = "Requires user interaction — cancelled (use curiosity system instead)"
+            await asyncio.to_thread(self.queue.cancel, task_id, reason)
+            await self._notify("task_failed", f"✗ Skipped (needs user): {title}", task=task)
+            return
 
         await self._notify("working", f"📋 Working on: {title}", task=task)
 
