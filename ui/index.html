@@ -1098,6 +1098,32 @@ async function init() {
   await loadProfile();
   await loadProactive();
 
+  // Global SSE stream — receives broadcasts (profile_updated, proactive, greeting)
+  function connectEvents() {
+    const es = new EventSource(`${API}/events`);
+    es.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        switch (event.type) {
+          case 'profile_updated':
+            loadProfile();
+            break;
+          case 'proactive':
+            if (event.message) appendMessage('agent', event.message, 'proactive');
+            break;
+          case 'greeting':
+            if (event.message) appendMessage('agent', event.message);
+            break;
+        }
+      } catch (_) {}
+    };
+    es.onerror = () => {
+      es.close();
+      setTimeout(connectEvents, 5000); // reconnect after 5s
+    };
+  }
+  connectEvents();
+
   // Poll for proactive messages every 5 minutes
   setInterval(loadProactive, 5 * 60 * 1000);
   setInterval(checkProactiveMessages, 10 * 60 * 1000);

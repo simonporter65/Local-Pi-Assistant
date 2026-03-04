@@ -7,6 +7,7 @@ Supports semantic search via embeddings (nomic-embed-text).
 import sqlite3
 import json
 import os
+import threading
 import numpy as np
 from datetime import datetime
 from typing import Optional
@@ -23,8 +24,11 @@ class AgentMemory:
     def __init__(self, db_path: str = DB_PATH):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db = sqlite3.connect(db_path, check_same_thread=False)
-        self.db.execute("PRAGMA journal_mode=WAL")  # Better concurrent writes
-        self.db.execute("PRAGMA synchronous=NORMAL")  # Faster on NVMe
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA cache_size=-32000")    # 32 MB page cache
+        self.db.execute("PRAGMA mmap_size=268435456")  # 256 MB memory-mapped I/O
+        self.db.execute("PRAGMA temp_store=MEMORY")    # temp tables in RAM
         self._init_schema()
         print(f"[MEMORY] Database: {db_path}")
 
@@ -98,8 +102,12 @@ class AgentMemory:
         self.db.commit()
         interaction_id = cursor.lastrowid
 
-        # Embed asynchronously (best-effort)
-        self._embed_and_store(interaction_id, user_input + " " + output[:400])
+        # Embed in background — don't block log_interaction
+        threading.Thread(
+            target=self._embed_and_store,
+            args=(interaction_id, user_input + " " + output[:400]),
+            daemon=True,
+        ).start()
 
         return interaction_id
 

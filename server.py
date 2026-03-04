@@ -90,19 +90,21 @@ async def lifespan(app: FastAPI):
     )
     asyncio.create_task(heartbeat.run(), name="heartbeat")
 
-    # Keep chat model warm — ping every 4 minutes to prevent eviction
+    # Keep key models warm — ping every 3 minutes to prevent eviction
     async def _keepalive():
         import ollama
+        _warm_models = ["llama3.2:3b", "qwen2.5:0.5b", "nomic-embed-text"]
         while True:
-            await asyncio.sleep(240)
-            try:
-                await asyncio.to_thread(
-                    ollama.generate, model="llama3.2:3b",
-                    prompt="hi", options={"num_predict": 1, "num_ctx": 64}
-                )
-                print("[KEEPALIVE] llama3.2:3b warmed", flush=True)
-            except Exception:
-                pass
+            await asyncio.sleep(180)
+            for mdl in _warm_models:
+                try:
+                    await asyncio.to_thread(
+                        ollama.generate, model=mdl,
+                        prompt="hi", options={"num_predict": 1, "num_ctx": 64}
+                    )
+                    print(f"[KEEPALIVE] {mdl} warmed", flush=True)
+                except Exception:
+                    pass
     asyncio.create_task(_keepalive(), name="keepalive")
 
     # Pre-warm embedding model so it's ready for memory search
@@ -117,6 +119,10 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     asyncio.create_task(_prewarm())
+
+    # Pre-warm the model route cache so first request doesn't subprocess
+    from core.router import get_installed_models
+    await asyncio.to_thread(get_installed_models)
 
     name = personality.name or "Assistant"
 
@@ -271,21 +277,22 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     t0 = time.time()
     name = personality.name or "Assistant"
 
-    await asyncio.sleep(0)
-    # Score previous exchange based on this new message (implicit feedback)
-    await asyncio.to_thread(training.score_previous_exchange, user_message, session_id)
-
-    # Track conversation
+    # Classify immediately (pure heuristic, ~0ms)
     _add_to_history(session_id, "user", user_message)
-
     intent = fast_classify(user_message)
     category = intent.get("category", "general_chat")
     print(f"[CLASSIFY] {intent['_source']}: {category} for: {user_message[:50]}", flush=True)
 
-    await asyncio.sleep(0)
+    # Parallel pre-flight: fetch user context + score previous exchange simultaneously
+    user_ctx, _ = await asyncio.gather(
+        asyncio.to_thread(user_model.get_context_for_prompt),
+        asyncio.to_thread(training.score_previous_exchange, user_message, session_id),
+    )
 
-    user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
+    # Fast heuristic extraction (~0ms) — may update facts immediately
     await asyncio.to_thread(user_model.extract_from_message, user_message)
+    # Notify UI immediately if any facts were extracted
+    asyncio.create_task(broadcast({"type": "profile_updated"}))
 
     route   = route_to_model(intent)
     model   = route["model"]
@@ -357,34 +364,48 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     yield sse("stage_done", message="Done")
     yield sse("final", message=final)
 
-    # Log
-    dur = int((time.time() - t0) * 1000)
-    await asyncio.to_thread(
-        memory.log_interaction, user_message, intent,
-        (result or {}).get("model", model), final,
-        (result or {}).get("success", False),
-        (result or {}).get("tool_calls", 0), dur,
-    )
-    # Only extract from exchange if response was successful
-    if final and "went wrong" not in final:
-        await asyncio.to_thread(user_model.extract_from_exchange, user_message, final)
-        await broadcast({"type": "profile_updated"})
-        # Record for LoRA training data collection
-        sys_prompt = personality.get_full_system_prompt(model, category, "", "")
-        await asyncio.to_thread(
-            training.record_exchange,
-            sys_prompt, user_message, final, session_id, model
-        )
+    # Fire-and-forget — user already has their response, don't block the stream
+    asyncio.create_task(_post_response(
+        user_message, final, intent, result, model, session_id, t0, category
+    ))
+    heartbeat.resume_after_user()
 
-    # Proactive
+
+async def _post_response(user_message, final, intent, result, model, session_id, t0, category):
+    """All post-response work — runs as a background task after final is sent."""
+    dur = int((time.time() - t0) * 1000)
+    if not final or "went wrong" in final:
+        await asyncio.to_thread(
+            memory.log_interaction, user_message, intent,
+            (result or {}).get("model", model), final,
+            False, (result or {}).get("tool_calls", 0), dur,
+        )
+        return
+
+    sys_prompt = personality.get_full_system_prompt(model, category, "", "")
+
+    # Run log, extract facts, and record training data in parallel
+    await asyncio.gather(
+        asyncio.to_thread(
+            memory.log_interaction, user_message, intent,
+            (result or {}).get("model", model), final,
+            (result or {}).get("success", True),
+            (result or {}).get("tool_calls", 0), dur,
+        ),
+        asyncio.to_thread(user_model.extract_from_exchange, user_message, final),
+        asyncio.to_thread(training.record_exchange, sys_prompt, user_message, final, session_id, model),
+    )
+    await broadcast({"type": "profile_updated"})
+
+    # Proactive check (rate-limited internally — fast no-op most of the time)
     pro = await asyncio.to_thread(proactive.check_after_message, user_message, final)
     if pro:
-        yield sse("proactive", message=pro)
+        await broadcast({"type": "proactive", "message": pro})
 
     # Follow-up research task — only if queue isn't already full
     if category in ("research", "web_search", "planning", "agentic_task", "coding"):
         summary = await asyncio.to_thread(task_queue.summary)
-        if summary.get("pending", 0) < 10:  # max 10 queued tasks
+        if summary.get("pending", 0) < 10:
             await asyncio.to_thread(
                 task_queue.add,
                 title=f"Follow up: {user_message[:55]}",
@@ -396,8 +417,6 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
                 task_type="research",
                 priority_name="low",
             )
-
-    heartbeat.resume_after_user()
 
 
 async def _iter_stream(stream):
@@ -455,7 +474,7 @@ async def _run_model_streaming(prompt, model, system, budget, history=None, use_
                         streaming_started = True
                         if token_buffer:
                             yield ("token", token_buffer)
-                    elif len(token_buffer) > 10:
+                    elif len(token_buffer) > 4:
                         # No FINAL: coming — stream normally
                         streaming_started = True
                         yield ("token", token_buffer)
