@@ -70,14 +70,13 @@ def run_pre_pipeline(user_message: str) -> dict:
 
     try:
         resp = ollama.generate(
-            model="qwen3.5:0.8b",
+            model="llama3.2:3b",
             prompt=MERGED_PRE_PROMPT.format(
                 categories=", ".join(CATEGORIES),
                 fact_cats="|".join(FACT_CATEGORIES),
                 input=user_message[:400],
             ),
             options={"temperature": 0.1, "num_predict": 150, "num_ctx": 1024},
-            think=False,
         )
         text = resp["response"].strip()
 

@@ -24,14 +24,13 @@ def rewrite_prompt(prompt: str, intent: dict) -> str:
 
     try:
         response = ollama.generate(
-            model="qwen3.5:0.8b",
+            model="llama3.2:3b",
             prompt=REWRITE_PROMPT.format(category=category, prompt=prompt[:600]),
             options={
                 "temperature": 0.3,
                 "num_predict": 300,
                 "num_ctx": 1024,
             },
-            think=False,
         )
         rewritten = response["response"].strip()
 
