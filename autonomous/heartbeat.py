@@ -73,7 +73,7 @@ NEW_TASKS: [
 
 Work autonomously. Use skills. Search the web. Write code. Do real work."""
 
-REFLECT_PROMPT = """Review the agent's recent activity and suggest what it should focus on next.
+REFLECT_PROMPT = """You are an AI assistant's task planner. Suggest practical background tasks.
 
 Recent completed tasks:
 {completed_tasks}
@@ -81,15 +81,18 @@ Recent completed tasks:
 User profile:
 {user_context}
 
-Current pending task count: {pending_count}
+Pending tasks: {pending_count}
 
-Generate 3-5 new tasks that would make the assistant more useful to this user.
-Consider: gaps in skills, things the user will likely ask about, proactive research,
-self-improvement opportunities, and maintenance tasks.
+Available skills: {skills}
 
-Return JSON array:
-[{{"title": "...", "description": "...", "task_type": "research|self_improve|prepare|reflect|maintain|custom", "priority_name": "normal|low|idle"}}]
-Return ONLY valid JSON."""
+Rules:
+- Only suggest tasks using available skills (web_search, web_fetch, bash_exec, memory_search, workspace, system_info)
+- NEVER suggest ML training, model training, NLP pipelines, or pip install
+- Focus on: researching topics the user cares about, checking system health, preparing useful info
+- 2-3 tasks maximum, use "low" or "idle" priority
+
+Return JSON array ONLY:
+[{{"title": "...", "description": "...", "task_type": "research|prepare|reflect|maintain", "priority_name": "low|idle"}}]"""
 
 
 
@@ -451,6 +454,7 @@ class HeartbeatLoop:
                     completed_tasks=completed_summary,
                     user_context=user_context,
                     pending_count=pending_count,
+                    skills=self.registry.list_skill_names(),
                 ),
                 options={"temperature": 0.7, "num_predict": 800, "num_ctx": 3000}
             )

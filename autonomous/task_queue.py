@@ -47,7 +47,17 @@ class TaskQueue:
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self._ensure_schema()
+        self._reset_stuck_running()   # Rescue tasks orphaned by previous restart
         self._seed_initial_tasks()
+
+    def _reset_stuck_running(self):
+        """On startup, reset any tasks stuck in 'running' state from previous process."""
+        n = self.db.execute(
+            "UPDATE tasks SET status='pending', started_at=NULL WHERE status='running'"
+        ).rowcount
+        self.db.commit()
+        if n:
+            print(f"[TASKQUEUE] Reset {n} stuck running task(s) to pending")
 
     def _ensure_schema(self):
         self.db.executescript("""
