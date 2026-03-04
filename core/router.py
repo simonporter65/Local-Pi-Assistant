@@ -74,11 +74,12 @@ MODEL_MAP = {
     "intent_classification":  {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "sentiment_analysis":     {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
     "web_search":             {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
+    "personality_change":     {"model": "qwen3.5:0.8b", "latency": "fast",   "thinking": False},
 
-    # ── Tier 2: qwen3:4b — medium complexity, direct mode ────────────────────
-    "planning":               {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
-    "research":               {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
-    "creative_writing":       {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
+    # ── Tier 2: qwen3:4b — medium complexity, with thinking ──────────────────
+    "planning":               {"model": "qwen3:4b",     "latency": "normal", "thinking": True},
+    "research":               {"model": "qwen3:4b",     "latency": "normal", "thinking": True},
+    "creative_writing":       {"model": "qwen3:4b",     "latency": "normal", "thinking": True},
     "agentic_task":           {"model": "qwen3:4b",     "latency": "normal", "thinking": False},
 
     # ── Tier 3: qwen3:8b — accuracy-critical, thinking mode ──────────────────

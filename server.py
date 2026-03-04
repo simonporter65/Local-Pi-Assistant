@@ -338,11 +338,24 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     else:
         past_ctx = "None yet." 
 
-    skills_list = registry.list_skills() if category in {
+    # Agentic categories get all skills; other categories get custom (agent-written) skills only.
+    # personality_change always gets set_personality.
+    _AGENTIC_SKILL_CATS = {
         "research", "coding", "debugging", "agentic_task", "web_browsing",
         "data_analysis", "file_management", "shell_command",
-        "screenshot_analysis", "image_description"
-    } else ""
+        "screenshot_analysis", "image_description",
+    }
+    custom_skills = registry.list_custom_skills()  # skills written by the agent at runtime
+    if category in _AGENTIC_SKILL_CATS:
+        skills_list = registry.list_skills()       # all skills for agentic work
+    elif category == "personality_change":
+        skills_list = json.dumps({"set_personality": registry.skills["set_personality"].DESCRIPTION}, indent=2) \
+            if "set_personality" in registry.skills else ""
+    elif custom_skills:
+        skills_list = custom_skills                # custom skills only (e.g. tell_time)
+    else:
+        skills_list = ""
+
     system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx, skills_list)
 
     # For web_search: pre-execute the search and inject results directly.
@@ -417,11 +430,13 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
     final = "Something went wrong — please try again."
     result = None
 
-    # Use skills for agentic categories (not web_search — handled above)
-    use_skills = category in {"research", "coding", "debugging",
-                              "agentic_task", "web_browsing", "data_analysis",
-                              "file_management", "shell_command",
-                              "screenshot_analysis", "image_description"}
+    # Use SKILL:/FINAL: parsing for: agentic categories, personality changes,
+    # and any category when custom (agent-written) skills are available.
+    use_skills = (
+        category in _AGENTIC_SKILL_CATS
+        or category == "personality_change"
+        or bool(custom_skills)
+    )
     try:
         async for event_type, data in _run_model_streaming(
             rewritten, model, system, budget,
@@ -444,7 +459,12 @@ async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncG
         final = "Sorry, that took too long. Please try again."
     except Exception as e:
         print(f"[CHAT ERROR] {type(e).__name__}: {e}", flush=True)
-        final = "Something went wrong — please try again." 
+        final = "Something went wrong — please try again."
+
+    # If personality was changed, hot-reload the config so next message uses new settings
+    if category == "personality_change":
+        personality._load()
+        yield sse("personality_updated", name=personality.name or "Assistant")
 
     # Track assistant response in history
     if final and final != "Something went wrong — please try again.":

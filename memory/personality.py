@@ -141,19 +141,34 @@ class PersonalityConfig:
 
         tone_str = "\n".join(tone_notes) if tone_notes else ""
 
-        # Only show skill format for categories that need tools
+        # Current personality settings — always included so model can report and change them
+        personality_info = (
+            f"YOUR CURRENT PERSONALITY SETTINGS (you can change these with set_personality):\n"
+            f"  Name:      {name}\n"
+            f"  Humor:     {flavor.get('humor', 40)}/100\n"
+            f"  Warmth:    {flavor.get('warmth', 60)}/100\n"
+            f"  Sass:      {flavor.get('sass', 30)}/100\n"
+            f"  Verbosity: {flavor.get('verbosity', 50)}/100\n"
+            f"  Chaos:     {flavor.get('chaos', 20)}/100"
+        )
+
+        # Show skill format when: category needs tools OR skills_list was provided (custom skills)
         skill_categories = {"web_search", "research", "coding", "debugging", "planning",
                             "agentic_task", "web_browsing", "data_analysis",
                             "file_management", "shell_command",
-                            "screenshot_analysis", "image_description"}
-        if category in skill_categories:
+                            "screenshot_analysis", "image_description",
+                            "personality_change"}
+        if category in skill_categories or skills_list:
             format_str = f'''{self._skills_section(skills_list)}SKILL FORMAT: SKILL: {{"name": "skill_name", "args": {{"arg1": "value1"}}}}
 FINAL FORMAT: FINAL: <your complete response>
-Use SKILL to call a tool, then wait for result. Use FINAL when done.'''
+Use SKILL to call a tool, then wait for result. Use FINAL when done.
+If you can answer directly without a skill, go straight to FINAL:.'''
         else:
             format_str = "Respond naturally and directly in plain conversational text. Never output JSON, never use SKILL: or FINAL: prefixes."
 
         return f"""{personality}
+
+{personality_info}
 
 WHAT YOU KNOW ABOUT THIS USER:
 {user_context}

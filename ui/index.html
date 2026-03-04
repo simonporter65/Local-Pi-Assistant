@@ -1195,6 +1195,15 @@ function handleStreamEvent(event, stageEl) {
       loadProfile();
       break;
 
+    case 'personality_updated':
+      // Personality was changed — update name in header immediately, then reload full profile
+      if (event.name) {
+        const nameEls = document.querySelectorAll('#assistantName, #headerName');
+        nameEls.forEach(el => { if (el) el.textContent = event.name; });
+      }
+      loadProfile();
+      break;
+
     case 'error':
       if (currentStageEl) removeElement(currentStageEl);
       currentStageEl = null;

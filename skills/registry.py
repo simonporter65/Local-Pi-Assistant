@@ -16,6 +16,15 @@ SKILLS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SKIP = {"__init__.py", "registry.py"}
 
+# Skills that ship with the codebase — not written by the agent at runtime.
+# Custom skills (anything NOT in this set) are shown in all categories.
+BUILTIN_SKILLS = {
+    "bash_exec", "memory_search", "python_repl", "screenshot",
+    "system_info", "web_fetch", "web_search", "workspace",
+    "browser", "browser_session", "skill_writer", "vision",
+    "set_personality",
+}
+
 
 class SkillRegistry:
     def __init__(self, skills_dir: str = SKILLS_DIR):
@@ -72,6 +81,19 @@ class SkillRegistry:
             {name: mod.DESCRIPTION for name, mod in self.skills.items()},
             indent=2
         )
+
+    def list_custom_skills(self) -> str:
+        """Return skills written by the agent at runtime (not shipped built-ins).
+
+        These are included in the system prompt for ALL categories so the
+        assistant is always aware of skills it has learned (e.g. tell_time).
+        """
+        custom = {
+            name: mod.DESCRIPTION
+            for name, mod in self.skills.items()
+            if name not in BUILTIN_SKILLS
+        }
+        return json.dumps(custom, indent=2) if custom else ""
 
     def list_skill_names(self) -> str:
         return ", ".join(self.skills.keys())

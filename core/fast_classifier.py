@@ -53,6 +53,27 @@ AGENTIC_PHRASES = [
     "check the site", "check this link",
 ]
 
+# Personality change requests — detected before general chat phrases
+# Note: phrases must be specific enough to avoid false positives on normal chat.
+PERSONALITY_CHANGE_PHRASES = [
+    # Trait-specific adjustments
+    "be funnier", "be warmer", "be sassier", "be wittier", "be cheekier",
+    "be more concise", "be more verbose", "be more creative", "be more chaotic",
+    "be more humorous", "be more playful", "be more serious", "be more casual",
+    "be less verbose", "be less formal", "be less serious",
+    "more humorous", "more playful", "less verbose",
+    # Name changes
+    "change your name", "your name is now", "rename yourself", "call yourself",
+    "make yourself more ", "make yourself less ",
+    # Explicit personality ops
+    "adjust your personality", "update your personality", "change your personality",
+    "reset your personality", "set your personality",
+    # Queries about personality
+    "what's your personality", "what are your settings", "show your settings",
+    "what is your personality", "show me your personality",
+    "your humor level", "your warmth level", "your verbosity", "your sass level",
+]
+
 # Messages that are conversational — skip expensive routing
 CHAT_PHRASES = [
     "do you", "can you", "you ", "your ", "remember", "know about",
@@ -67,6 +88,12 @@ CHAT_PHRASES = [
 def fast_classify(message: str) -> dict:
     msg = message.lower().strip()
     words = set(re.findall(r'\b\w+\b', msg))
+
+    # Personality change / query — highest priority (before generic chat check)
+    if any(p in msg for p in PERSONALITY_CHANGE_PHRASES):
+        return {"category": "personality_change", "confidence": 0.95,
+                "needs_tools": True, "rewritten": message,
+                "facts": [], "_source": "heuristic"}
 
     # Conversational phrases — always general chat
     if any(p in msg for p in CHAT_PHRASES):
