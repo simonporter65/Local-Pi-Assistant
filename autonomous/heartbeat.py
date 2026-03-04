@@ -157,8 +157,9 @@ class HeartbeatLoop:
         self._running = True
         print("[HEARTBEAT] Background loop started")
 
-        # Initial startup delay — let the server stabilise
-        await asyncio.sleep(15)
+        # Initial startup delay — let the server stabilise and models warm up fully
+        # 3 min gives uvicorn time to bind, warmup to finish, and Ollama queue to clear
+        await asyncio.sleep(3 * 60)
 
         while self._running:
             try:
