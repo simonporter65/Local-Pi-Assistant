@@ -1266,11 +1266,18 @@ function showProfile() {
   profilePanelOpen = !profilePanelOpen;
   const chat = document.querySelector('.chat');
 
-  // If opening, close skills panel directly (no flag toggle needed)
-  if (profilePanelOpen && skillsPanelOpen) {
-    skillsPanelOpen = false;
-    const sp = document.getElementById('skillsPanel');
-    if (sp) sp.style.transform = 'translateX(100%)';
+  // If opening, close skills and task panels directly
+  if (profilePanelOpen) {
+    if (skillsPanelOpen) {
+      skillsPanelOpen = false;
+      const sp = document.getElementById('skillsPanel');
+      if (sp) sp.style.transform = 'translateX(100%)';
+    }
+    if (typeof taskPanelOpen !== 'undefined' && taskPanelOpen) {
+      taskPanelOpen = false;
+      const tp = document.getElementById('taskPanel');
+      if (tp) tp.style.transform = 'translateX(100%)';
+    }
   }
 
   let panel = document.getElementById('profilePanel');
@@ -1374,11 +1381,18 @@ function showSkills() {
   skillsPanelOpen = !skillsPanelOpen;
   const chat = document.querySelector('.chat');
 
-  // If opening, close profile panel directly (no flag toggle needed)
-  if (skillsPanelOpen && profilePanelOpen) {
-    profilePanelOpen = false;
-    const pp = document.getElementById('profilePanel');
-    if (pp) pp.style.transform = 'translateX(100%)';
+  // If opening, close profile and task panels directly
+  if (skillsPanelOpen) {
+    if (profilePanelOpen) {
+      profilePanelOpen = false;
+      const pp = document.getElementById('profilePanel');
+      if (pp) pp.style.transform = 'translateX(100%)';
+    }
+    if (typeof taskPanelOpen !== 'undefined' && taskPanelOpen) {
+      taskPanelOpen = false;
+      const tp = document.getElementById('taskPanel');
+      if (tp) tp.style.transform = 'translateX(100%)';
+    }
   }
 
   let panel = document.getElementById('skillsPanel');

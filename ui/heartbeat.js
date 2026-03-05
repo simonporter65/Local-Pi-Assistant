@@ -272,18 +272,35 @@ function showBackgroundCompletionToast(title, summary) {
 // ─────────────────────────────────────────────
 function toggleTaskPanel() {
   taskPanelOpen = !taskPanelOpen;
+  const chat = document.querySelector('.chat');
+
+  // If opening, close profile and skills panels directly
+  if (taskPanelOpen) {
+    if (typeof profilePanelOpen !== 'undefined' && profilePanelOpen) {
+      profilePanelOpen = false;
+      const pp = document.getElementById('profilePanel');
+      if (pp) pp.style.transform = 'translateX(100%)';
+    }
+    if (typeof skillsPanelOpen !== 'undefined' && skillsPanelOpen) {
+      skillsPanelOpen = false;
+      const sp = document.getElementById('skillsPanel');
+      if (sp) sp.style.transform = 'translateX(100%)';
+    }
+  }
+
   let panel = document.getElementById('taskPanel');
-  
   if (!panel) {
     panel = createTaskPanel();
     document.body.appendChild(panel);
   }
-  
+
   if (taskPanelOpen) {
     loadAndRenderTasks(panel);
     panel.style.transform = 'translateX(0)';
+    if (chat) chat.style.marginRight = '380px';
   } else {
     panel.style.transform = 'translateX(100%)';
+    if (chat) chat.style.marginRight = '';
   }
 }
 
