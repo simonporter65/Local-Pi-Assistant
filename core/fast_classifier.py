@@ -74,6 +74,10 @@ PERSONALITY_CHANGE_PHRASES = [
     "your humor level", "your warmth level", "your verbosity", "your sass level",
 ]
 
+# Explicit skill invocation — "use the X skill to ..." → always agentic
+# Compiled once at module level for fast_classify() performance
+_SKILL_INVOKE_RE = re.compile(r'\buse\b.{0,30}\bskill\b', re.I)
+
 # Messages that are conversational — skip expensive routing
 CHAT_PHRASES = [
     "do you", "can you", "you ", "your ", "remember", "know about",
@@ -92,6 +96,15 @@ def fast_classify(message: str) -> dict:
     # Personality change / query — highest priority (before generic chat check)
     if any(p in msg for p in PERSONALITY_CHANGE_PHRASES):
         return {"category": "personality_change", "confidence": 0.95,
+                "needs_tools": True, "rewritten": message,
+                "facts": [], "_source": "heuristic"}
+
+    # Explicit skill invocation — "use the browser skill to ...", "use X skill" etc.
+    # Must fire before CHAT_PHRASES and SEARCH_WORDS to avoid mis-routing
+    # e.g. "use the browser skill to check the weather" has "weather" (SEARCH_WORDS)
+    # but the user's intent is clearly agentic, not a DuckDuckGo lookup.
+    if _SKILL_INVOKE_RE.search(msg):
+        return {"category": "agentic_task", "confidence": 0.95,
                 "needs_tools": True, "rewritten": message,
                 "facts": [], "_source": "heuristic"}
 
