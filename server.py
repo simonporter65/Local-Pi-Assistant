@@ -1,76 +1,52 @@
 """
-server.py — Final integrated version
+server.py — Application entry point.
 
-New additions:
-- POST /personality  — save personality config from setup screen
-- GET  /setup        — serve personality picker (redirected to on first run)
-- Personality injected into all system prompts
-- Assistant name used throughout
+Responsibilities:
+  - Define the FastAPI app and lifespan (startup / shutdown)
+  - Mount route modules and static files
+  - Warm models on startup
+
+All business logic lives in routes/ and state.py.
 """
 
 import asyncio
-import json
 import os
 import sys
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator, Set
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.fast_classifier import fast_classify
 from core.log import get_logger
-from core.router import route_to_model
-from core.token_budget import get_token_budget
-
-logger = get_logger("server")
 from memory.store import AgentMemory
 from memory.user_model import UserModel
 from memory.personality import PersonalityConfig
+from memory.training_collector import TrainingCollector
 from proactive.engine import ProactiveEngine
 from skills.registry import SkillRegistry
 from autonomous.task_queue import TaskQueue
 from autonomous.heartbeat import HeartbeatLoop
-from memory.training_collector import TrainingCollector
+from state import AppState
+
+from routes.chat        import router as chat_router
+from routes.events      import router as events_router
+from routes.personality import router as personality_router
+from routes.tasks       import router as tasks_router
+
+logger = get_logger("server")
 
 AGENT_HOME = os.environ.get("AGENT_HOME", str(Path(__file__).parent))
 DB_PATH    = os.environ.get("AGENT_DB",   f"{AGENT_HOME}/memory/agent.db")
-
-# ── Global broadcast ──────────────────────────────────────────────────────────
-_broadcast_queues: Set[asyncio.Queue] = set()
-
-async def broadcast(event: dict):
-    dead = set()
-    for q in _broadcast_queues:
-        try:
-            q.put_nowait(event)
-        except asyncio.QueueFull:
-            dead.add(q)
-    for q in dead:
-        _broadcast_queues.discard(q)
-
-# ── Globals ───────────────────────────────────────────────────────────────────
-registry:    SkillRegistry     = None
-memory:      AgentMemory       = None
-user_model:  UserModel         = None
-personality: PersonalityConfig = None
-proactive:   ProactiveEngine   = None
-task_queue:  TaskQueue         = None
-heartbeat:   HeartbeatLoop     = None
-training:    TrainingCollector = None
+UI_DIR     = Path(__file__).parent / "ui"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, memory, user_model, personality, proactive, task_queue, heartbeat, training
-
     os.makedirs(f"{AGENT_HOME}/memory",      exist_ok=True)
     os.makedirs(f"{AGENT_HOME}/workspace",   exist_ok=True)
     os.makedirs(f"{AGENT_HOME}/screenshots", exist_ok=True)
@@ -81,20 +57,33 @@ async def lifespan(app: FastAPI):
     personality = PersonalityConfig(f"{AGENT_HOME}/memory/personality.json")
     proactive   = ProactiveEngine(user_model, memory, registry)
     task_queue  = TaskQueue(DB_PATH)
+    training    = TrainingCollector(DB_PATH)
 
-    training = TrainingCollector(DB_PATH)
+    arc = AppState(
+        registry=registry,
+        memory=memory,
+        user_model=user_model,
+        personality=personality,
+        proactive=proactive,
+        task_queue=task_queue,
+        heartbeat=None,   # set below after arc is created
+        training=training,
+    )
 
     heartbeat = HeartbeatLoop(
         task_queue=task_queue,
         registry=registry,
         memory=memory,
         user_model=user_model,
-        broadcast_fn=broadcast,
+        broadcast_fn=arc.broadcast,
         personality=personality,
     )
+    arc.heartbeat = heartbeat
+    app.state.arc = arc
+
     asyncio.create_task(heartbeat.run(), name="heartbeat")
 
-    # Keep key models warm — ping every 3 minutes to prevent eviction
+    # Keepalive — ping models every 3 minutes to prevent Ollama eviction
     async def _keepalive():
         import ollama
         while True:
@@ -112,13 +101,14 @@ async def lifespan(app: FastAPI):
                 logger.debug("keepalive: nomic-embed-text warmed")
             except Exception:
                 pass
+
     asyncio.create_task(_keepalive(), name="keepalive")
 
-    # Pre-warm the model route cache so first request doesn't subprocess
+    # Pre-warm model route cache so the first request doesn't subprocess
     from core.router import get_installed_models
     await asyncio.to_thread(get_installed_models)
 
-    # Warm key models before announcing readiness — first message will be instant
+    # Warm primary models before announcing readiness
     import ollama as _ollama
     try:
         await asyncio.to_thread(
@@ -128,16 +118,15 @@ async def lifespan(app: FastAPI):
         logger.info("Warmed qwen3.5:0.8b")
     except Exception as _e:
         logger.warning("Could not warm qwen3.5:0.8b: %s", _e)
-    # nomic-embed-text uses the embeddings API, not generate
     try:
         await asyncio.to_thread(_ollama.embeddings, model="nomic-embed-text", prompt="warmup")
         logger.info("Warmed nomic-embed-text")
     except Exception as _e:
         logger.warning("Could not warm nomic-embed-text: %s", _e)
 
+    # Startup greeting (non-blocking)
     name = personality.name or "Assistant"
 
-    # Startup greeting — model is already loaded so this is fast
     async def _startup_greeting():
         try:
             ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
@@ -150,11 +139,11 @@ async def lifespan(app: FastAPI):
                         f"Write a warm 1-sentence greeting acknowledging what you remember. "
                         f"Be natural, not robotic. Max 20 words."
                     ),
-                    options={"temperature": 0.7, "num_predict": 40, "num_ctx": 512}
+                    options={"temperature": 0.7, "num_predict": 40, "num_ctx": 512},
                 )
                 greeting = resp["response"].strip()
                 if greeting:
-                    await broadcast({"type": "greeting", "message": greeting})
+                    await arc.broadcast({"type": "greeting", "message": greeting})
         except Exception as e:
             logger.warning("Startup greeting failed: %s", e)
 
@@ -165,636 +154,38 @@ async def lifespan(app: FastAPI):
     logger.info("Skills: %d | Tasks: %s", len(registry.skills), task_queue.summary())
 
     yield
+
     heartbeat.stop()
 
+
+# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-UI_DIR = Path(__file__).parent / "ui"
+from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
 
+# Include route modules
+app.include_router(chat_router)
+app.include_router(events_router)
+app.include_router(personality_router)
+app.include_router(tasks_router)
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+
+# ── Core pages ────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    if not personality.is_configured:
+async def root(request: Request):
+    arc = request.app.state.arc
+    if not arc.personality.is_configured:
         return RedirectResponse("/setup")
     return (UI_DIR / "index.html").read_text()
+
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page():
     return (UI_DIR / "personality.html").read_text()
-
-
-# ── Personality API ───────────────────────────────────────────────────────────
-
-@app.post("/personality")
-async def save_personality(request: Request):
-    config = await request.json()
-    await asyncio.to_thread(personality.save, config)
-
-    name = config.get("name", "Assistant")
-    await asyncio.to_thread(user_model.set_preference, "assistant_name", name)
-
-    # Queue a personalised greeting
-    await asyncio.to_thread(
-        task_queue.add,
-        title=f"Compose greeting as {name}",
-        description=(
-            f"Your name is {name}. Personality: {config.get('profile','balanced')}. "
-            f"Write a warm in-character first greeting (2-3 sentences). "
-            f"Save it to workspace as 'greeting.txt'."
-        ),
-        task_type="prepare",
-        priority_name="high",
-    )
-    return {"status": "saved", "name": name}
-
-@app.get("/personality")
-async def get_personality():
-    return personality.get()
-
-
-# ── Global SSE stream ─────────────────────────────────────────────────────────
-
-@app.get("/events")
-async def event_stream(request: Request):
-    q: asyncio.Queue = asyncio.Queue(maxsize=50)
-    _broadcast_queues.add(q)
-
-    async def generate():
-        try:
-            summary = await asyncio.to_thread(task_queue.summary)
-            p = personality.get()
-            yield _sse({
-                "type": "connected",
-                "queue_summary": summary,
-                "assistant_name": p.get("name") or "Assistant",
-                "configured": p.get("configured", False),
-            })
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(q.get(), timeout=30.0)
-                    yield _sse(event)
-                except asyncio.TimeoutError:
-                    yield ": ping\n\n"
-        finally:
-            _broadcast_queues.discard(q)
-
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
-# ── Conversation history (keyed by session) ─────────────────────────────────
-_session_histories: dict = {}
-_session_last_used: dict = {}
-MAX_HISTORY = 6
-MAX_SESSIONS = 50       # Cap total sessions in memory
-SESSION_TTL  = 3600     # Drop sessions idle > 1 hour
-
-def _get_history(session_id: str) -> list:
-    _session_last_used[session_id] = time.time()
-    return _session_histories.setdefault(session_id, [])
-
-def _add_to_history(session_id: str, role: str, msg: str):
-    h = _get_history(session_id)
-    h.append({"role": role, "content": msg})
-    if len(h) > MAX_HISTORY * 2:
-        del h[:-MAX_HISTORY * 2]
-    # Prune stale sessions if we're over the cap
-    if len(_session_histories) > MAX_SESSIONS:
-        now = time.time()
-        stale = [sid for sid, ts in _session_last_used.items()
-                 if now - ts > SESSION_TTL]
-        for sid in stale:
-            _session_histories.pop(sid, None)
-            _session_last_used.pop(sid, None)
-
-# ── Chat ──────────────────────────────────────────────────────────────────────
-
-@app.post("/chat")
-async def chat(request: Request):
-    body = await request.json()
-    msg = body.get("message", "").strip()
-    if not msg:
-        return {"error": "empty"}
-    session_id = request.headers.get("X-Session-ID", "default")
-    heartbeat.pause_for_user()
-    return StreamingResponse(
-        _chat_stream(msg, session_id),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post("/chat/stop")
-async def chat_stop():
-    """Called by the UI when the user hits the stop button. Immediately resumes heartbeat."""
-    heartbeat.resume_after_user()
-    return {"ok": True}
-
-
-async def _chat_stream(user_message: str, session_id: str = 'default') -> AsyncGenerator[str, None]:
-    def sse(t, **kw):
-        logger.debug("SSE %s: %s", t, kw)
-        return _sse({"type": t, **kw})
-
-    t0 = time.time()
-    name = personality.name or "Assistant"
-
-    # Classify immediately (pure heuristic, ~0ms)
-    _add_to_history(session_id, "user", user_message)
-    intent = fast_classify(user_message)
-    category = intent.get("category", "general_chat")
-    logger.info("classify [%s]: %s → %s", intent["_source"], user_message[:50], category)
-
-    # Get user context — cached 30s DB read, run in thread to avoid blocking event loop
-    user_ctx = await asyncio.to_thread(user_model.get_context_for_prompt)
-    asyncio.create_task(asyncio.to_thread(training.score_previous_exchange, user_message, session_id))
-    asyncio.create_task(asyncio.to_thread(user_model.extract_from_message, user_message))
-    asyncio.create_task(broadcast({"type": "profile_updated"}))
-
-    route     = route_to_model(intent)
-    model     = route["model"]
-    latency   = route.get("latency", "fast")
-    thinking  = route.get("thinking", False)
-    budget    = get_token_budget(latency, category)
-
-    yield sse("model", name=model, latency=latency, category=category, thinking=thinking)
-    await asyncio.sleep(0)
-
-    rewritten = user_message
-    # Only search memory if message references past context
-    memory_triggers = {"remember", "earlier", "last time", "you said", "we discussed",
-                       "before", "previously", "again", "still", "anymore"}
-    msg_words = set(user_message.lower().split())
-    if msg_words & memory_triggers:
-        past = await asyncio.to_thread(memory.semantic_search, user_message, 3)
-        past_ctx = "\n".join([
-            f"- '{p['input'][:50]}' → '{p['output'][:80]}'"
-            for p in past
-        ]) or "None yet."
-    else:
-        past_ctx = "None yet." 
-
-    # Agentic categories get all skills; other categories get custom (agent-written) skills only.
-    # personality_change always gets set_personality.
-    _AGENTIC_SKILL_CATS = {
-        "research", "coding", "debugging", "agentic_task", "web_browsing",
-        "data_analysis", "file_management", "shell_command",
-        "screenshot_analysis", "image_description",
-    }
-    custom_skills = registry.list_custom_skills()  # skills written by the agent at runtime
-    if category in _AGENTIC_SKILL_CATS:
-        skills_list = registry.list_skills()       # all skills for agentic work
-    elif category == "personality_change":
-        skills_list = json.dumps({"set_personality": registry.skills["set_personality"].DESCRIPTION}, indent=2) \
-            if "set_personality" in registry.skills else ""
-    elif custom_skills:
-        skills_list = custom_skills                # custom skills only (e.g. tell_time)
-    else:
-        skills_list = ""
-
-    system = personality.get_full_system_prompt(model, category, user_ctx, past_ctx, skills_list)
-
-    # For web_search: pre-execute the search and inject results directly.
-    # More reliable than hoping the model emits the SKILL: format.
-    if category == "web_search":
-        yield sse("stage", message="Searching the web...")
-        await asyncio.sleep(0)
-        try:
-            search_results = await asyncio.wait_for(
-                asyncio.to_thread(registry.run, "web_search", query=rewritten, max_results=5),
-                timeout=20.0,
-            )
-            injected = str(search_results)[:6000]
-            system = system + f"\n\nWEB SEARCH RESULTS for '{rewritten}':\n{injected}\n\nSynthesize these results into a helpful, accurate response."
-            logger.info("web_search pre-executed for: %s", rewritten[:50])
-        except asyncio.TimeoutError:
-            logger.warning("web_search pre-execute timed out after 20s")
-        except Exception as e:
-            logger.warning("web_search pre-execute failed: %s", e)
-
-    # For web_browsing with a simple URL: pre-fetch the page content.
-    # Faster and more reliable than relying on the model to emit SKILL: correctly.
-    if category == "web_browsing":
-        import re as _re
-        url_match = _re.search(r'https?://[^\s"\'<>]+', user_message)
-        if url_match:
-            found_url = url_match.group(0)
-            # Only pre-fetch if it looks like a read request, not interaction
-            interaction_words = {"click", "fill", "submit", "login", "sign", "type", "scroll"}
-            is_interaction = bool(set(user_message.lower().split()) & interaction_words)
-            if not is_interaction:
-                yield sse("stage", message="Fetching page...")
-                await asyncio.sleep(0)
-                try:
-                    page_content = await asyncio.wait_for(
-                        asyncio.to_thread(registry.run, "web_fetch", url=found_url, max_chars=4000),
-                        timeout=20.0,
-                    )
-                    injected = str(page_content)[:6000]
-                    system = system + f"\n\nPAGE CONTENT from {found_url}:\n{injected}\n\nAnswer based on this content."
-                    logger.info("web_fetch pre-executed for: %s", found_url[:60])
-                except asyncio.TimeoutError:
-                    logger.warning("web_fetch pre-execute timed out after 20s for: %s", found_url[:60])
-                except Exception as e:
-                    logger.warning("web_fetch pre-execute failed: %s", e)
-
-    # For image/screenshot tasks: pre-run vision skill if a file path is in the message
-    if category in {"screenshot_analysis", "image_description"}:
-        import re as _re
-        img_match = _re.search(r'(/[^\s"\']+\.(?:png|jpg|jpeg|gif|webp))', user_message, _re.I)
-        if img_match:
-            yield sse("stage", message="Analyzing image...")
-            await asyncio.sleep(0)
-            try:
-                img_path = img_match.group(1)
-                question = user_message.replace(img_path, "").strip() or "Describe what you see in detail."
-                vision_result = await asyncio.wait_for(
-                    asyncio.to_thread(registry.run, "vision", image_path=img_path, question=question),
-                    timeout=30.0,
-                )
-                injected = str(vision_result)[:6000]
-                system = system + f"\n\nIMAGE ANALYSIS of {img_path}:\n{injected}\n\nAnswer based on this analysis."
-                logger.info("vision pre-executed for: %s", img_path)
-            except asyncio.TimeoutError:
-                logger.warning("vision pre-execute timed out after 30s for: %s", img_path)
-            except Exception as e:
-                logger.warning("vision pre-execute failed: %s", e)
-
-    yield sse("stage", message=f"{name} is thinking...")
-    await asyncio.sleep(0)
-
-    final = "Something went wrong — please try again."
-    result = None
-
-    # Use SKILL:/FINAL: parsing for: agentic categories, personality changes,
-    # and any category when custom (agent-written) skills are available.
-    use_skills = (
-        category in _AGENTIC_SKILL_CATS
-        or category == "personality_change"
-        or bool(custom_skills)
-    )
-    try:
-        async for event_type, data in _run_model_streaming(
-            rewritten, model, system, budget,
-            _get_history(session_id),
-            use_skills=use_skills,
-            use_thinking=thinking,
-        ):
-            if event_type == "token":
-                yield sse("token", text=data)
-            elif event_type in ("think", "think_token"):
-                yield sse("thinking_token", text=data)
-            elif event_type == "skill":
-                yield sse("skill_call", skill=data.get("name", "?"), args=data.get("args", {}))
-            elif event_type == "done":
-                result = data
-                final = data.get("output", final)
-                break
-    except asyncio.TimeoutError:
-        logger.warning("Chat model timed out")
-        final = "Sorry, that took too long. Please try again."
-    except Exception as e:
-        logger.error("Chat error: %s: %s", type(e).__name__, e, exc_info=True)
-        final = "Something went wrong — please try again."
-
-    # If personality was changed, hot-reload the config so next message uses new settings
-    if category == "personality_change":
-        personality._load()
-        yield sse("personality_updated", name=personality.name or "Assistant")
-
-    # Track assistant response in history
-    if final and final != "Something went wrong — please try again.":
-        _add_to_history(session_id, "assistant", final)
-
-    try:
-        yield sse("stage_done", message="Done")
-        yield sse("final", message=final)
-
-        # Fire-and-forget — user already has their response, don't block the stream
-        asyncio.create_task(_post_response(
-            user_message, final, intent, result, model, session_id, t0, category
-        ))
-    finally:
-        # Always resume heartbeat — even if client disconnected mid-stream
-        heartbeat.resume_after_user()
-
-
-async def _post_response(user_message, final, intent, result, model, session_id, t0, category):
-    """All post-response work — runs as a background task after final is sent."""
-    dur = int((time.time() - t0) * 1000)
-    if not final or "went wrong" in final:
-        await asyncio.to_thread(
-            memory.log_interaction, user_message, intent,
-            (result or {}).get("model", model), final,
-            False, (result or {}).get("tool_calls", 0), dur,
-        )
-        return
-
-    sys_prompt = personality.get_full_system_prompt(model, category, "", "")
-
-    # Run log, extract facts, and record training data in parallel
-    await asyncio.gather(
-        asyncio.to_thread(
-            memory.log_interaction, user_message, intent,
-            (result or {}).get("model", model), final,
-            (result or {}).get("success", True),
-            (result or {}).get("tool_calls", 0), dur,
-        ),
-        asyncio.to_thread(user_model.extract_from_exchange, user_message, final),
-        asyncio.to_thread(training.record_exchange, sys_prompt, user_message, final, session_id, model),
-    )
-    await broadcast({"type": "profile_updated"})
-
-    # Proactive check (rate-limited internally — fast no-op most of the time)
-    pro = await asyncio.to_thread(proactive.check_after_message, user_message, final)
-    if pro:
-        await broadcast({"type": "proactive", "message": pro})
-
-    # Follow-up research task — only if queue isn't already full
-    if category in ("research", "web_search", "planning", "agentic_task", "coding"):
-        summary = await asyncio.to_thread(task_queue.summary)
-        if summary.get("pending", 0) < 10:
-            await asyncio.to_thread(
-                task_queue.add,
-                title=f"Follow up: {user_message[:55]}",
-                description=(
-                    f"User asked: {user_message}\n"
-                    f"Response: {final[:300]}\n\n"
-                    f"Dig deeper. Find additional useful info. Prepare a proactive update."
-                ),
-                task_type="research",
-                priority_name="low",
-            )
-
-
-async def _iter_stream(stream):
-    """Wrap synchronous ollama stream iterator for async use."""
-    for chunk in stream:
-        yield chunk
-        await asyncio.sleep(0)  # yield control back to event loop between chunks
-
-
-def _needed_ctx(system: str, messages: list, budget: int) -> int:
-    """Estimate minimum num_ctx needed and snap to a discrete level.
-
-    Smaller num_ctx = smaller KV cache allocation = faster prefill and lower RAM.
-    We snap to powers-of-2-ish levels to avoid model reloads on minor size changes.
-    """
-    total_chars = len(system) + sum(len(m.get("content", "")) for m in messages)
-    input_tokens = total_chars // 4 + 64  # rough chars→tokens + safety margin
-    needed = input_tokens + budget
-    for level in (1024, 2048, 4096, 8192):
-        if needed <= level:
-            return level
-    return 8192
-
-
-async def _run_model_streaming(prompt, model, system, budget, history=None,
-                               use_skills=False, use_thinking=False):
-    """Stream tokens from the model.
-
-    Yields:
-      ("token",       text)   — content token to stream to user
-      ("think_token", text)   — thinking token (display as grey reasoning text)
-      ("skill",       dict)   — skill call to execute
-      ("done",        dict)   — final result {output, success, tool_calls, model}
-
-    use_thinking=True  → model reasons silently before answering (qwen3.5 thinking mode)
-    use_thinking=False → model answers directly (think=False kwarg suppresses CoT)
-    """
-    import ollama, re
-
-    # think=False must be a top-level kwarg, NOT inside options
-    think_kwargs = {} if use_thinking else {"think": False}
-
-    if use_skills:
-        user_content = f"Task: {prompt}\n\nUse SKILL: {{...}} or FINAL: <answer>"
-    else:
-        user_content = prompt
-
-    messages = list(history or [])
-    if messages and messages[-1]["role"] == "user":
-        messages[-1] = {"role": "user", "content": user_content}
-    else:
-        messages.append({"role": "user", "content": user_content})
-
-    tool_count = 0
-    stuck_count = 0
-    last_reply = ""
-    first_call = True
-    token_buffer = ""
-
-    while tool_count < 20:
-        msgs_with_system = [{"role": "system", "content": system}] + messages
-
-        if first_call:
-            first_call = False
-            num_ctx = _needed_ctx(system, msgs_with_system, budget)
-            stream = await asyncio.to_thread(
-                ollama.chat, model=model, messages=msgs_with_system,
-                stream=True,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": num_ctx},
-                **think_kwargs,
-            )
-            collected = []
-            # Direct chat: stream immediately. Skill-using categories: buffer to detect SKILL:/FINAL:
-            streaming_started = not use_skills
-            async for chunk in _iter_stream(stream):
-                msg = chunk.get("message", {})
-                # Thinking tokens — stream live as grey reasoning text
-                think_tok = msg.get("thinking") or ""
-                if think_tok:
-                    yield ("think_token", think_tok)
-                token = msg.get("content") or ""
-                if not token:
-                    continue
-                collected.append(token)
-                token_buffer += token
-                if not streaming_started:
-                    if "FINAL:" in token_buffer:
-                        token_buffer = token_buffer.split("FINAL:", 1)[1].lstrip()
-                        streaming_started = True
-                        if token_buffer:
-                            yield ("token", token_buffer)
-                    elif token_buffer.lstrip().startswith("SKILL:") or token_buffer.lstrip().startswith("{\""):
-                        pass  # tool call — buffer silently
-                    elif len(token_buffer) > 40:
-                        streaming_started = True
-                        yield ("token", token_buffer)
-                else:
-                    yield ("token", token)
-            raw = "".join(collected)
-        else:
-            num_ctx = _needed_ctx(system, msgs_with_system, budget)
-            resp = await asyncio.to_thread(
-                ollama.chat, model=model, messages=msgs_with_system,
-                options={"temperature": 0.7, "num_predict": budget, "num_ctx": num_ctx},
-                **think_kwargs,
-            )
-            raw = resp["message"].get("content") or ""
-            # Emit any thinking from non-streaming follow-up calls
-            think_text = resp["message"].get("thinking") or ""
-            if think_text:
-                yield ("think_token", think_text)
-
-        last_reply = raw
-        # Strip any inline <think> blocks from legacy DeepSeek-style models
-        reply = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-
-        messages.append({"role": "assistant", "content": raw})
-
-        final_m = re.search(r"FINAL:[\s\n]*(.*)", reply, re.DOTALL)
-        if final_m:
-            yield ("done", {"output": final_m.group(1).strip(), "success": True,
-                            "tool_calls": tool_count, "model": model})
-            return
-
-        skill_m = re.search(r"SKILL:\s*(\{.*?\})", reply, re.DOTALL)
-        if skill_m:
-            try:
-                _decoder = json.JSONDecoder()
-                sc, _ = _decoder.raw_decode(skill_m.group(1))
-                yield ("skill", sc)
-                res = await asyncio.to_thread(registry.run, sc["name"], **sc.get("args", {}))
-                res_str = str(res)[:6000]
-                messages.append({"role": "user", "content": f"Skill result:\n{res_str}\n\nContinue."})
-                tool_count += 1
-                continue
-            except Exception as e:
-                messages.append({"role": "user", "content": f"Skill error: {e}. Try another."})
-                tool_count += 1
-                continue
-
-        if last_reply.strip():
-            yield ("done", {"output": last_reply.strip(), "success": True,
-                            "tool_calls": tool_count, "model": model})
-            return
-
-        # Model returned empty content — nudge, bail after 3 stuck iterations
-        stuck_count += 1
-        if stuck_count >= 3:
-            yield ("done", {"output": "I'm sorry, I had trouble generating a response. Please try again.",
-                            "success": False, "tool_calls": tool_count, "model": model})
-            return
-        messages.append({"role": "user", "content": "Continue. SKILL: or FINAL: required."})
-
-    yield ("done", {"output": last_reply.strip() or "Something went wrong — please try again.",
-                    "success": bool(last_reply.strip()), "tool_calls": tool_count, "model": model})
-
-# ── Task queue API ────────────────────────────────────────────────────────────
-
-@app.get("/tasks")
-async def get_tasks(status: str = None):
-    tasks   = await asyncio.to_thread(task_queue.get_all, status)
-    summary = await asyncio.to_thread(task_queue.summary)
-    return {"tasks": tasks, "summary": summary}
-
-@app.post("/tasks")
-async def create_task(request: Request):
-    body = await request.json()
-    tid = await asyncio.to_thread(
-        task_queue.add,
-        title=body.get("title", "User task"),
-        description=body.get("description", ""),
-        task_type=body.get("task_type", "custom"),
-        priority_name=body.get("priority_name", "normal"),
-    )
-    return {"id": tid}
-
-@app.delete("/tasks/{task_id}")
-async def cancel_task(task_id: int):
-    await asyncio.to_thread(task_queue.cancel, task_id, "Cancelled by user")
-    return {"status": "cancelled"}
-
-@app.get("/tasks/summary")
-async def task_summary():
-    return await asyncio.to_thread(task_queue.summary)
-
-# ── Profile & Proactive ───────────────────────────────────────────────────────
-
-@app.get("/profile")
-async def get_profile():
-    from autonomous.training_curator import get_training_status
-    p = await asyncio.to_thread(user_model.get_display_profile)
-    p["assistant_name"] = personality.name
-    try:
-        ts = await asyncio.to_thread(get_training_status, DB_PATH)
-        p["training_total"] = ts.get("total_exchanges", 0)
-        p["training_good"] = ts.get("good_quality", 0)
-    except Exception:
-        pass
-    return p
-
-@app.post("/lora/opt-in")
-async def lora_opt_in(action: str = "yes"):
-    """User responds to LoRA training opt-in."""
-    import sqlite3
-    from datetime import date, timedelta
-    db = sqlite3.connect(DB_PATH)
-    try:
-        if action == "yes":
-            db.execute(
-                "INSERT OR REPLACE INTO training_meta (key, value) VALUES ('lora_opted_in', '1')"
-            )
-            db.commit()
-            # Queue personalisation task — runs scripts/lora_train.py via bash_exec
-            script_path = str(Path(__file__).parent / "scripts" / "lora_train.py")
-            task_queue.add(
-                title="Build personalised model (arc-personal)",
-                description=(
-                    f"The user has opted in to on-device personalisation. "
-                    f"Run: SKILL: {{\"name\": \"bash_exec\", \"args\": {{\"command\": \"python3 {script_path} --db {DB_PATH}\", \"timeout\": 300}}}} "
-                    f"Then report the result. If successful, tell the user to restart the service."
-                ),
-                task_type="prepare",
-                priority_name="low",
-            )
-            return {"ok": True, "message": "Personalisation scheduled. Will run overnight."}
-        else:
-            # Snooze for 30 days
-            ask_after = str(date.today() + timedelta(days=30))
-            db.execute(
-                "INSERT OR REPLACE INTO training_meta (key, value) VALUES ('lora_ask_after', ?)",
-                (ask_after,)
-            )
-            db.commit()
-            return {"ok": True, "message": "Snoozed for 30 days."}
-    finally:
-        db.close()
-
-
-@app.get("/lora/status")
-async def lora_status():
-    """Return personalisation status: whether arc-personal has been built."""
-    marker = Path(AGENT_HOME) / "memory" / "personal_model.json"
-    if marker.exists():
-        try:
-            info = json.loads(marker.read_text())
-            return {"personalised": True, **info}
-        except Exception:
-            pass
-    return {"personalised": False}
-
-
-@app.get("/proactive")
-async def get_proactive():
-    return {"suggestions": await asyncio.to_thread(proactive.get_sidebar_suggestions)}
-
-@app.get("/proactive/push")
-async def proactive_push():
-    return {"message": await asyncio.to_thread(proactive.get_push_message)}
-
-# ── Helper ────────────────────────────────────────────────────────────────────
-
-def _sse(data: dict) -> str:
-    return f"data: {json.dumps(data)}\n\n"
 
 
 if __name__ == "__main__":
