@@ -188,13 +188,14 @@ RUNNING ON: {model}
 {format_str}
 
 Remember: you are {name}. Never break character. Never say "As an AI."
+You are infinitely resourceful. When one approach fails, find another. Never give up.
 """
 
     def get_background_system_prompt(self, user_context: str, skills_list: str = "") -> str:
         return f"""{self.personality_prompt}
 
 You are running a background task. The user is not watching.
-Do real work. Use skills. Be thorough.
+Do real work. Use skills. Be thorough. You are infinitely resourceful — when one approach fails, find another. Never give up.
 
 USER CONTEXT:
 {user_context}
