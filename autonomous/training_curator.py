@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-LORA_DIR = Path("/mnt/nvme/lora")
+LORA_DIR = Path(os.environ.get("LORA_DIR", "/mnt/nvme/lora"))
 TRAINING_DATA_PATH = LORA_DIR / "training_data.jsonl"
 MIN_RESPONSE_LEN = 20
 MAX_RESPONSE_LEN = 1500
@@ -102,7 +102,7 @@ def should_ask_opt_in(db_path: str) -> bool:
 
     # Already opted in or explicitly declined recently
     meta = db.execute(
-        "SELECT value FROM training_meta WHERE key IN ('lora_opted_in', 'lora_ask_after')"
+        "SELECT key, value FROM training_meta WHERE key IN ('lora_opted_in', 'lora_ask_after')"
     ).fetchall()
     meta_dict = {r["key"]: r["value"] for r in meta} if meta else {}
 

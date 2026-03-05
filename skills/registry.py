@@ -5,11 +5,11 @@ Loads and manages all agent skills. Supports hot-reload for newly written skills
 
 import importlib
 import importlib.util
+import inspect
 import os
 import sys
 import json
 import threading
-import traceback
 
 from core.log import get_logger
 
@@ -52,6 +52,19 @@ class SkillRegistry:
             spec.loader.exec_module(mod)
 
             if hasattr(mod, "run") and hasattr(mod, "DESCRIPTION"):
+                # Verify run() is callable and accepts **kwargs
+                try:
+                    sig = inspect.signature(mod.run)
+                    has_var_kw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig.parameters.values()
+                    )
+                    if not has_var_kw:
+                        logger.warning(
+                            "Skill %s.run() has no **kwargs — skill calls may fail", name
+                        )
+                except (TypeError, ValueError):
+                    logger.warning("Could not inspect signature of %s.run()", name)
                 self.skills[name] = mod
             else:
                 logger.warning("Skipped %s: missing 'run' or 'DESCRIPTION'", name)

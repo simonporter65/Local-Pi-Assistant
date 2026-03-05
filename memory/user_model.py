@@ -17,9 +17,6 @@ from core.log import get_logger
 
 logger = get_logger("user_model")
 
-# Module-level cache for get_context_for_prompt (invalidated on fact write)
-_ctx_cache: dict = {"value": "", "expires": 0.0}
-
 
 # Facts the model tracks with emoji icons for the UI
 FACT_CATEGORIES = {
@@ -84,6 +81,7 @@ Return ONLY valid JSON."""
 class UserModel:
     def __init__(self, memory):
         self.memory = memory
+        self._ctx_cache: dict = {"value": "", "expires": 0.0}  # instance-scoped
         self._ensure_tables()
 
     def _ensure_tables(self):
@@ -224,7 +222,7 @@ class UserModel:
 
     def _store_fact(self, category: str, fact: str, confidence: float = 0.8, source: str = ""):
         """Store a fact, avoiding near-duplicates."""
-        _ctx_cache["expires"] = 0.0  # invalidate context cache
+        self._ctx_cache["expires"] = 0.0  # invalidate context cache
         # Check for existing similar fact
         existing = self.memory.db.execute(
             "SELECT id, fact FROM user_facts WHERE category=? ORDER BY updated_at DESC LIMIT 5",
@@ -254,8 +252,8 @@ class UserModel:
     def get_context_for_prompt(self) -> str:
         """Build a rich context string for injection into the system prompt."""
         # 30-second cache — invalidated whenever a fact is written
-        if _time.time() < _ctx_cache["expires"] and _ctx_cache["value"]:
-            return _ctx_cache["value"]
+        if _time.time() < self._ctx_cache["expires"] and self._ctx_cache["value"]:
+            return self._ctx_cache["value"]
 
         facts = self.memory.db.execute(
             "SELECT category, fact, confidence FROM user_facts WHERE confidence > 0.5 ORDER BY confidence DESC, updated_at DESC"
@@ -283,8 +281,8 @@ class UserModel:
                 lines.append(f"- {cat.capitalize()}: {', '.join(facts_list[:2])}")
 
         result = "\n".join(lines) if lines else "No profile yet."
-        _ctx_cache["value"] = result
-        _ctx_cache["expires"] = _time.time() + 30
+        self._ctx_cache["value"] = result
+        self._ctx_cache["expires"] = _time.time() + 30
         return result
 
     def get_display_profile(self) -> dict:

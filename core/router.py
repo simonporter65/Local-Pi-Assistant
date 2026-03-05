@@ -63,6 +63,8 @@ def get_installed_models() -> list:
             _model_cache["updated"] = time.time()
         except Exception:
             logger.warning("Failed to list Ollama models — using cached list", exc_info=True)
+            # Retry sooner: mark cache as 240s old so we try again in ~60s not 5min
+            _model_cache["updated"] = time.time() - 240
     return _model_cache["models"]
 
 
