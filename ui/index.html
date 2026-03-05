@@ -692,6 +692,7 @@
           <button class="header-btn" id="taskBtn" onclick="toggleTaskPanel()" title="Background tasks">📋</button>
           <div class="task-badge" id="taskBadge"></div>
         </div>
+        <button class="header-btn" onclick="showSkills()" title="Skills">⚡</button>
         <button class="header-btn" onclick="clearChat()" title="Clear chat">🗑</button>
         <button class="header-btn" onclick="showProfile()" title="Your profile">👤</button>
       </div>
@@ -1350,6 +1351,113 @@ function clearChat() {
   document.getElementById('messages').innerHTML = '<div class="date-separator">Today</div>';
   lastSender = null;
   currentStageEl = null;
+}
+
+// ─────────────────────────────────────────────
+// Skills panel
+// ─────────────────────────────────────────────
+let skillsPanelOpen = false;
+
+function showSkills() {
+  skillsPanelOpen = !skillsPanelOpen;
+  let panel = document.getElementById('skillsPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'skillsPanel';
+    panel.style.cssText = `
+      position: fixed; right: 0; top: 0; bottom: 0;
+      width: 360px; max-width: 90vw;
+      background: #161a1f;
+      border-left: 1px solid rgba(255,255,255,0.07);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 1001;
+      display: flex; flex-direction: column;
+      font-family: 'DM Sans', sans-serif;
+    `;
+    document.body.appendChild(panel);
+  }
+  if (skillsPanelOpen) {
+    // Close profile panel if open
+    if (profilePanelOpen) showProfile();
+    renderSkillsPanel(panel);
+    panel.style.transform = 'translateX(0)';
+  } else {
+    panel.style.transform = 'translateX(100%)';
+  }
+}
+
+async function renderSkillsPanel(panel) {
+  panel.innerHTML = `<div style="padding:20px;color:#6b7280;font-size:13px;">Loading skills…</div>`;
+  try {
+    const r = await fetch(`${API}/skills`);
+    const data = await r.json();
+    const skills = data.skills || [];
+    const custom  = skills.filter(s => !s.builtin);
+    const builtin = skills.filter(s =>  s.builtin);
+
+    function skillCard(s) {
+      const isCustom = !s.builtin;
+      const accentColor = isCustom ? '#3ecf8e' : '#6b7280';
+      const badge = isCustom
+        ? `<span style="font-size:9px;background:rgba(62,207,142,0.15);color:#3ecf8e;border:1px solid rgba(62,207,142,0.3);border-radius:4px;padding:1px 6px;font-weight:600;letter-spacing:0.05em;">CUSTOM</span>`
+        : `<span style="font-size:9px;color:#374151;">built-in</span>`;
+      const argsHtml = s.args.length
+        ? `<div style="margin-top:5px;font-size:10.5px;color:#374151;font-family:'DM Mono',monospace;">${s.args.map(a => escHtml(a)).join(' · ')}</div>`
+        : '';
+      return `
+        <div class="skill-panel-card" data-skill="${escHtml(s.name)}"
+          style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:background 0.15s;"
+          onmouseenter="this.style.background='rgba(62,207,142,0.06)'"
+          onmouseleave="this.style.background=''"
+          onclick="useSkillFromPanel('${escHtml(s.name)}')">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:600;color:${accentColor};font-family:'DM Mono',monospace;">${escHtml(s.name)}</span>
+            ${badge}
+          </div>
+          <div style="font-size:12px;color:#9ca3af;line-height:1.45;">${escHtml(s.description || '')}</div>
+          ${argsHtml}
+        </div>
+      `;
+    }
+
+    panel.innerHTML = `
+      <div style="padding:20px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:15px;font-weight:600;color:#e8eaed;">⚡ Skills</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:2px;">${data.total} loaded · click to use</div>
+        </div>
+        <button onclick="showSkills()" style="background:transparent;border:none;color:#6b7280;cursor:pointer;font-size:18px;">✕</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;">
+        ${custom.length ? `
+          <div style="padding:10px 14px 6px;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#3ecf8e;font-weight:600;">
+            ⚡ Agent-written (${custom.length})
+          </div>
+          ${custom.map(skillCard).join('')}
+        ` : ''}
+        <div style="padding:10px 14px 6px;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#374151;font-weight:600;margin-top:${custom.length ? '8' : '0'}px;">
+          Built-in (${builtin.length})
+        </div>
+        ${builtin.map(skillCard).join('')}
+      </div>
+    `;
+  } catch (e) {
+    panel.innerHTML = `<div style="padding:20px;color:#ef4444;">Failed to load skills: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function useSkillFromPanel(skillName) {
+  const input = document.getElementById('messageInput');
+  input.value = `Use the ${skillName} skill to `;
+  input.focus();
+  // Move cursor to end
+  input.selectionStart = input.selectionEnd = input.value.length;
+  // Auto-resize textarea
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  // Close the panel
+  showSkills();
 }
 
 // ─────────────────────────────────────────────

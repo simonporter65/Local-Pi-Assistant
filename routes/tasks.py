@@ -1,5 +1,5 @@
 """
-routes/tasks.py — Task queue, profile, LoRA, and proactive endpoints.
+routes/tasks.py — Task queue, profile, LoRA, proactive, and skills endpoints.
 
 GET    /tasks              — list tasks
 POST   /tasks              — create a task
@@ -10,6 +10,7 @@ POST   /lora/opt-in        — respond to personalisation opt-in
 GET    /lora/status        — is arc-personal built?
 GET    /proactive          — sidebar suggestions
 GET    /proactive/push     — push notification message
+GET    /skills             — list all loaded skills with descriptions
 """
 
 import asyncio
@@ -142,3 +143,24 @@ async def get_proactive(request: Request):
 async def proactive_push(request: Request):
     arc = request.app.state.arc
     return {"message": await asyncio.to_thread(arc.proactive.get_push_message)}
+
+
+@router.get("/skills")
+async def list_skills(request: Request):
+    """Return all loaded skills with name, description, args, and builtin flag."""
+    from skills.registry import BUILTIN_SKILLS
+    arc = request.app.state.arc
+    skills_data = []
+    for name, mod in arc.registry.skills.items():
+        desc = mod.DESCRIPTION if hasattr(mod, "DESCRIPTION") else {}
+        desc_text = desc.get("description", "") if isinstance(desc, dict) else str(desc)
+        args = list(desc.get("args", {}).keys()) if isinstance(desc, dict) else []
+        skills_data.append({
+            "name": name,
+            "description": desc_text,
+            "args": args,
+            "builtin": name in BUILTIN_SKILLS,
+        })
+    # Custom skills first, then builtins; alphabetical within each group
+    skills_data.sort(key=lambda s: (s["builtin"], s["name"]))
+    return {"skills": skills_data, "total": len(skills_data)}
